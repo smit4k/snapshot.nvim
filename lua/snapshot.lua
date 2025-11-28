@@ -24,4 +24,9 @@ M.hello = function()
   return module.my_first_function(M.config.opt)
 end
 
+M.capture_buffer = function()
+  local buf_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+  return table.concat(buf_lines, "\n")
+end
+
 return M
