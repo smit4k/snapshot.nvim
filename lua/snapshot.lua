@@ -45,4 +45,10 @@ M.capture_visual = function()
   return table.concat(buf_lines, "\n")
 end
 
+M.capture_highlights = function(bufnr)
+  bufnr = bufnr or 0
+  local extmarks = vim.api.nvim_buf_get_extmarks(bufnr, -1, 0, -1, { details = true })
+  return extmarks
+end
+
 return M
