@@ -26,13 +26,12 @@ end
 
 M.capture_buffer = function()
   local buf_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-  return table.concat(buf_lines, "\n")
+  return buf_lines or {}
 end
 
 M.capture_visual = function()
   local start_pos = vim.fn.getpos("'<")
   local end_pos = vim.fn.getpos("'>")
-
   local buf_lines = vim.api.nvim_buf_get_lines(0, start_pos[2] - 1, end_pos[2], false)
 
   if #buf_lines == 1 then
@@ -42,7 +41,7 @@ M.capture_visual = function()
     buf_lines[#buf_lines] = string.sub(buf_lines[#buf_lines], 1, end_pos[3])
   end
 
-  return table.concat(buf_lines, "\n")
+  return buf_lines or {}
 end
 
 M.capture_highlights = function(bufnr)
