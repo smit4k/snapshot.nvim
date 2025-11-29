@@ -5,9 +5,11 @@ vim.api.nvim_create_user_command("Snapshot", function()
 end, {})
 
 vim.api.nvim_create_user_command("SnapshotBuffer", function()
-  print(snapshot.capture_buffer())
+  local lines = snapshot.capture_buffer()
+  print(table.concat(lines, "\n"))
 end, {})
 
 vim.api.nvim_create_user_command("SnapshotVisual", function()
-  print(snapshot.capture_visual())
+  local lines = snapshot.capture_visual()
+  print(table.concat(lines, "\n"))
 end, { range = true })
