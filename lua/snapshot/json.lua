@@ -9,16 +9,16 @@ M.build_snapshot_json = function(lines, extmarks)
     json[i] = { text = line, spans = {} }
   end
 
-  -- Map extmarks to resolved colors
   for _, mark in ipairs(extmarks) do
-    local group = mark.hl_group
-    if group then
-      local colors = hl.resolve_hl(group)
+    local row = mark[1]
+    local start_col = mark[2]
+    local details = mark[4]
 
-      local row = mark.start_row + 1
-      table.insert(json[row].spans, {
-        start = mark.start_col,
-        ["end"] = mark.end_col,
+    if details and details.hl_group and json[row + 1] then
+      local colors = hl.resolve_hl(details.hl_group)
+      table.insert(json[row + 1].spans, {
+        start = start_col,
+        ["end"] = details.end_col or start_col,
         fg = colors.fg,
         bg = colors.bg,
         bold = colors.bold,
