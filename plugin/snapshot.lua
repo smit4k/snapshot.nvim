@@ -1,6 +1,17 @@
 local snapshot = require("snapshot")
 
-vim.api.nvim_create_user_command("Snapshot", function()
+-- Main snapshot command - works in both normal and visual mode
+vim.api.nvim_create_user_command("Snapshot", function(opts)
+  snapshot.snapshot(opts.args and vim.fn.json_decode(opts.args) or {})
+end, { range = true, nargs = "?" })
+
+-- Convenience command for visual selections
+vim.api.nvim_create_user_command("SnapshotVisual", function()
+  snapshot.snapshot()
+end, { range = true })
+
+-- Legacy commands for debugging
+vim.api.nvim_create_user_command("SnapshotHello", function()
   print(snapshot.hello())
 end, {})
 
@@ -8,11 +19,6 @@ vim.api.nvim_create_user_command("SnapshotBuffer", function()
   local lines = snapshot.capture_buffer()
   print(table.concat(lines, "\n"))
 end, {})
-
-vim.api.nvim_create_user_command("SnapshotVisual", function()
-  local lines = snapshot.capture_visual()
-  print(table.concat(lines, "\n"))
-end, { range = true })
 
 vim.api.nvim_create_user_command("SnapshotBufferJson", function()
   local bufnr = vim.api.nvim_get_current_buf()
