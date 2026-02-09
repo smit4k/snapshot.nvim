@@ -74,11 +74,12 @@ local function merge_highlights_to_spans(highlights, line)
   return spans
 end
 
-M.build_snapshot_json = function(bufnr, lines)
+M.build_snapshot_json = function(bufnr, lines, start_row)
   local json = {}
+  start_row = start_row or 0
 
   for i, line in ipairs(lines) do
-    local row = i - 1
+    local row = start_row + i - 1
     local highlights = get_treesitter_highlights(bufnr, row, line)
     local spans = merge_highlights_to_spans(highlights, line)
 

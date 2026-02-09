@@ -2,6 +2,20 @@
 
 All notable changes to snapshot.nvim will be documented in this file.
 
+## [0.1.1] - 2026-02-09
+
+### Fixed
+- Fixed "E474: Attempt to decode a blank string" error when running `:Snapshot` without arguments
+- Fixed visual selection detection by using visual marks instead of mode checking
+- Fixed Treesitter row offset when capturing visual selections
+- Fixed font loading by using correct FiraCode download URL
+- Fixed font API compatibility by switching from rusttype to ab_glyph
+
+### Improved
+- Better error handling for invalid JSON arguments
+- More robust visual selection capture
+- Automatic fallback to full buffer if no visual selection
+
 ## [0.1.0] - 2026-02-09
 
 ### Added
