@@ -1,0 +1,16 @@
+[package]
+name = "snapshot-generator"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "snapshot-generator"
+path = "src/main.rs"
+
+[dependencies]
+image = "0.25"
+imageproc = "0.25"
+ab_glyph = "0.2"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"

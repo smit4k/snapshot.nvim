@@ -1,1 +1,11 @@
 vendor/plenary.nvim
+
+# Rust build artifacts
+generator/target/
+generator/Cargo.lock
+
+# Test files
+test_*.lua
+test_*.json
+test_init.vim
+*.png
