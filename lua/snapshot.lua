@@ -70,30 +70,33 @@ M.snapshot = function(opts)
   opts = opts or {}
   local bufnr = vim.api.nvim_get_current_buf()
   
-  -- Determine if we're in visual mode or should capture the whole buffer
-  local mode = vim.fn.mode()
+  -- Check if we have a visual selection by checking the marks
+  local start_pos = vim.fn.getpos("'<")
+  local end_pos = vim.fn.getpos("'>")
   local lines
   local start_line_num = 1
   
-  if mode == "v" or mode == "V" or mode == "\22" then
-    local start_pos = vim.fn.getpos("'<")
-    local end_pos = vim.fn.getpos("'>")
+  -- If the visual marks are valid and different, use them
+  if start_pos[2] > 0 and end_pos[2] > 0 and start_pos[2] <= end_pos[2] then
     start_line_num = start_pos[2]
     lines = vim.api.nvim_buf_get_lines(bufnr, start_pos[2] - 1, end_pos[2], false)
     
     -- Handle character-wise visual selection
-    if mode == "v" and #lines == 1 then
+    -- If it's a single line and columns are specified
+    if #lines == 1 and start_pos[3] > 0 and end_pos[3] > 0 then
       lines[1] = string.sub(lines[1], start_pos[3], end_pos[3])
-    elseif mode == "v" and #lines > 1 then
+    elseif #lines > 1 and start_pos[3] > 0 and end_pos[3] > 0 then
+      -- Multi-line character-wise selection
       lines[1] = string.sub(lines[1], start_pos[3])
       lines[#lines] = string.sub(lines[#lines], 1, end_pos[3])
     end
   else
+    -- No valid visual selection, capture the entire buffer
     lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   end
   
   -- Build the JSON payload
-  local buffer_json = require("snapshot.json").build_snapshot_json(bufnr, lines)
+  local buffer_json = require("snapshot.json").build_snapshot_json(bufnr, lines, start_line_num - 1)
   
   -- Merge config with opts
   local final_config = vim.tbl_deep_extend("force", M.config, opts)

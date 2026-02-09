@@ -7,5 +7,7 @@ generator/Cargo.lock
 # Test files
 test_*.lua
 test_*.json
+test_*.sh
 test_init.vim
+verify_install.lua
 *.png

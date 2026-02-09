@@ -146,6 +146,14 @@ The plugin uses FiraCode by default. To use a different font:
 
 ## Troubleshooting
 
+### "Attempt to decode a blank string" error
+
+This error occurs when the command is called with empty arguments. This has been fixed in the latest version. If you still see this:
+
+1. Make sure you're using the latest version of the plugin
+2. Restart Neovim after updating: `:qa!` then reopen
+3. Run `:Snapshot` without any arguments
+
 ### Generator not found error
 
 If you see "Snapshot generator not found", build the Rust binary:
@@ -153,6 +161,12 @@ If you see "Snapshot generator not found", build the Rust binary:
 ```bash
 cd generator
 cargo build --release
+```
+
+Or use the Makefile:
+
+```bash
+make build
 ```
 
 ### Image quality issues
@@ -169,6 +183,13 @@ The plugin uses Treesitter highlights. Make sure you have Treesitter parsers ins
 ```lua
 :TSInstall <your-language>
 ```
+
+### Visual selection not working
+
+Make sure you:
+1. Enter visual mode (`v`, `V`, or `Ctrl-v`)
+2. Select the code you want to capture
+3. Run `:Snapshot` while still in visual mode, or press `Esc` first (the plugin uses visual marks)
 
 ## Development
 
