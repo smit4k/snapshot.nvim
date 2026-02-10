@@ -115,14 +115,54 @@ M.snapshot = function(opts)
   
   local json_string = vim.fn.json_encode(payload)
   
-  -- Find the generator binary
-  local script_path = debug.getinfo(1, "S").source:sub(2)
-  local plugin_root = vim.fn.fnamemodify(script_path, ":h:h:h")
-  local generator_path = plugin_root .. "/generator/target/release/snapshot-generator"
+  -- Find the generator binary using multiple methods for reliability
+  local generator_path
+  
+  -- Method 1: Try to find via the loaded module path
+  local snapshot_module = package.loaded["snapshot"]
+  if snapshot_module and snapshot_module.__file then
+    local module_path = snapshot_module.__file
+    local plugin_root = vim.fn.fnamemodify(module_path, ":h:h")
+    generator_path = plugin_root .. "/generator/target/release/snapshot-generator"
+  end
+  
+  -- Method 2: Use runtimepath to find the plugin
+  if not generator_path or vim.fn.executable(generator_path) ~= 1 then
+    local rtp = vim.api.nvim_list_runtime_paths()
+    for _, path in ipairs(rtp) do
+      if path:match("snapshot%.nvim") or path:match("snapshot$") then
+        local test_path = path .. "/generator/target/release/snapshot-generator"
+        if vim.fn.executable(test_path) == 1 then
+          generator_path = test_path
+          break
+        end
+      end
+    end
+  end
   
   -- Check if the generator exists
-  if vim.fn.executable(generator_path) ~= 1 then
-    vim.notify("Snapshot generator not found. Please run: cd " .. plugin_root .. "/generator && cargo build --release", vim.log.levels.ERROR)
+  if not generator_path or vim.fn.executable(generator_path) ~= 1 then
+    -- Try to provide helpful error message with correct path
+    local rtp = vim.api.nvim_list_runtime_paths()
+    local plugin_path = nil
+    for _, path in ipairs(rtp) do
+      if path:match("snapshot%.nvim") or path:match("snapshot$") then
+        plugin_path = path
+        break
+      end
+    end
+    
+    if plugin_path then
+      vim.notify(
+        "Snapshot generator not found. Please run:\ncd " .. plugin_path .. "/generator && cargo build --release",
+        vim.log.levels.ERROR
+      )
+    else
+      vim.notify(
+        "Snapshot generator not found and plugin path could not be determined.\nPlease build the generator manually.",
+        vim.log.levels.ERROR
+      )
+    end
     return nil
   end
   
