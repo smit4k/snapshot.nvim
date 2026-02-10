@@ -25,7 +25,7 @@ A beautiful Neovim plugin for creating code snapshots with syntax highlighting, 
 
 ```lua
 {
-  "yourusername/snapshot.nvim",
+  "smit4k/snapshot.nvim",
   build = "cd generator && cargo build --release",
   config = function()
     require("snapshot").setup({
@@ -46,7 +46,7 @@ A beautiful Neovim plugin for creating code snapshots with syntax highlighting, 
 
 ```lua
 use {
-  'yourusername/snapshot.nvim',
+  'smit4k/snapshot.nvim',
   run = 'cd generator && cargo build --release',
   config = function()
     require("snapshot").setup({
@@ -72,19 +72,6 @@ use {
 ### Commands
 
 - `:Snapshot` - Create a snapshot of visual selection or entire buffer
-- `:SnapshotVisual` - Create a snapshot of the current visual selection
-
-### Keybindings
-
-Add these to your Neovim config for quick access:
-
-```lua
--- Visual mode: press <leader>cs to capture selection
-vim.keymap.set('v', '<leader>cs', ':Snapshot<CR>', { desc = 'Capture snapshot' })
-
--- Normal mode: capture entire buffer
-vim.keymap.set('n', '<leader>cs', ':Snapshot<CR>', { desc = 'Capture snapshot' })
-```
 
 ### Configuration
 
@@ -101,157 +88,9 @@ require("snapshot").setup({
 })
 ```
 
-### Programmatic Usage
-
-You can also call the snapshot function directly from Lua:
-
-```lua
--- With custom options
-require("snapshot").snapshot({
-  output_path = "/tmp/my-code.png",
-  line_numbers = true,
-  background = "#ffffff",
-})
-```
-
-## How It Works
-
-1. **Lua Frontend**: The Neovim plugin captures your code and extracts syntax highlighting information using Treesitter
-2. **JSON Communication**: The code and highlighting data are serialized to JSON
-3. **Rust Backend**: A Rust binary generates a beautiful PNG image with proper text rendering and colors
-4. **Output**: The image is saved to your specified location
-
-## Customization
-
-### Background Colors
-
-Popular color scheme backgrounds:
-
-```lua
-{
-  background = "#282c34",  -- One Dark (default)
-  background = "#1e1e1e",  -- VS Code Dark
-  background = "#2e3440",  -- Nord
-  background = "#1d2021",  -- Gruvbox
-  background = "#011627",  -- Night Owl
-}
-```
-
 ### Font
 
 The plugin uses FiraCode by default. To use a different font:
 
 1. Replace `generator/fonts/FiraCode-Regular.ttf` with your preferred font
 2. Rebuild: `cd generator && cargo build --release`
-
-## Troubleshooting
-
-### "Attempt to decode a blank string" error
-
-This error occurs when the command is called with empty arguments. This has been fixed in the latest version. If you still see this:
-
-1. Make sure you're using the latest version of the plugin
-2. Restart Neovim after updating: `:qa!` then reopen
-3. Run `:Snapshot` without any arguments
-
-### Generator not found error
-
-If you see "Snapshot generator not found", build the Rust binary:
-
-```bash
-cd generator
-cargo build --release
-```
-
-Or use the Makefile:
-
-```bash
-make build
-```
-
-### Image quality issues
-
-Try adjusting these settings:
-- Increase `font_size` for larger text
-- Increase `line_height` for better readability
-- Adjust `padding` for more space around the code
-
-### Colors don't match my theme
-
-The plugin uses Treesitter highlights. Make sure you have Treesitter parsers installed:
-
-```lua
-:TSInstall <your-language>
-```
-
-### Visual selection not working
-
-Make sure you:
-1. Enter visual mode (`v`, `V`, or `Ctrl-v`)
-2. Select the code you want to capture
-3. Run `:Snapshot` while still in visual mode, or press `Esc` first (the plugin uses visual marks)
-
-## Development
-
-### Building from source
-
-```bash
-git clone https://github.com/yourusername/snapshot.nvim
-cd snapshot.nvim/generator
-cargo build --release
-```
-
-### Running tests
-
-```bash
-make test
-```
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## License
-
-MIT License - see LICENSE file for details
-
-## Acknowledgments
-
-- Inspired by [Polacode](https://github.com/octref/polacode) for VS Code
-- Built with [imageproc](https://github.com/image-rs/imageproc) and [ab_glyph](https://github.com/alexheretic/ab-glyph)
-- Uses [FiraCode](https://github.com/tonsky/FiraCode) font
-$ gh repo create my-plugin -p ellisonleao/nvim-plugin-template
-```
-
-Via github web page:
-
-Click on `Use this template`
-
-![](https://docs.github.com/assets/cb-36544/images/help/repository/use-this-template-button.png)
-
-## Features and structure
-
-- 100% Lua
-- Github actions for:
-  - running tests using [plenary.nvim](https://github.com/nvim-lua/plenary.nvim) and [busted](https://olivinelabs.com/busted/)
-  - check for formatting errors (Stylua)
-  - vimdocs autogeneration from README.md file
-  - luarocks release (LUAROCKS_API_KEY secret configuration required)
-
-### Plugin structure
-
-```
-.
-├── lua
-│   ├── plugin_name
-│   │   └── module.lua
-│   └── plugin_name.lua
-├── Makefile
-├── plugin
-│   └── plugin_name.lua
-├── README.md
-├── tests
-│   ├── minimal_init.lua
-│   └── plugin_name
-│       └── plugin_name_spec.lua
-```
