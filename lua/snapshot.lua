@@ -69,18 +69,18 @@ end
 M.snapshot = function(opts)
   opts = opts or {}
   local bufnr = vim.api.nvim_get_current_buf()
-  
+
   -- Check if we have a visual selection by checking the marks
   local start_pos = vim.fn.getpos("'<")
   local end_pos = vim.fn.getpos("'>")
   local lines
   local start_line_num = 1
-  
+
   -- If the visual marks are valid and different, use them
   if start_pos[2] > 0 and end_pos[2] > 0 and start_pos[2] <= end_pos[2] then
     start_line_num = start_pos[2]
     lines = vim.api.nvim_buf_get_lines(bufnr, start_pos[2] - 1, end_pos[2], false)
-    
+
     -- Handle character-wise visual selection
     -- If it's a single line and columns are specified
     if #lines == 1 and start_pos[3] > 0 and end_pos[3] > 0 then
@@ -94,30 +94,52 @@ M.snapshot = function(opts)
     -- No valid visual selection, capture the entire buffer
     lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   end
-  
+
   -- Build the JSON payload
   local buffer_json = require("snapshot.json").build_snapshot_json(bufnr, lines, start_line_num - 1)
-  
+
   -- Merge config with opts
   local final_config = vim.tbl_deep_extend("force", M.config, opts)
   final_config.start_line = final_config.start_line or start_line_num
-  
+
   -- Set default output path if not provided
   if not final_config.output_path then
     local home = os.getenv("HOME") or "."
     final_config.output_path = home .. "/snapshot.png"
+  else
+    -- Expand tilde and environment variables in user-provided paths
+    final_config.output_path = vim.fn.expand(final_config.output_path)
+    
+    -- Check if the path is a directory and append default filename if needed
+    if vim.fn.isdirectory(final_config.output_path) == 1 then
+      -- Remove trailing slash if present and add default filename
+      final_config.output_path = final_config.output_path:gsub("/$", "") .. "/snapshot.png"
+    elseif final_config.output_path:match("/$") then
+      -- Path ends with / but directory doesn't exist yet, add default filename
+      final_config.output_path = final_config.output_path .. "snapshot.png"
+    end
+    
+    -- Ensure the path has a valid image extension
+    if not final_config.output_path:match("%.[pP][nN][gG]$") 
+       and not final_config.output_path:match("%.[jJ][pP][eE]?[gG]$")
+       and not final_config.output_path:match("%.[wW][eE][bB][pP]$") then
+      vim.notify(
+        "Warning: output_path '" .. final_config.output_path .. "' may not have a valid image extension (.png, .jpg, .jpeg, .webp). This may cause the snapshot to fail.",
+        vim.log.levels.WARN
+      )
+    end
   end
-  
+
   local payload = {
     lines = buffer_json,
     config = final_config,
   }
-  
+
   local json_string = vim.fn.json_encode(payload)
-  
+
   -- Find the generator binary using multiple methods for reliability
   local generator_path
-  
+
   -- Method 1: Try to find via the loaded module path
   local snapshot_module = package.loaded["snapshot"]
   if snapshot_module and snapshot_module.__file then
@@ -125,7 +147,7 @@ M.snapshot = function(opts)
     local plugin_root = vim.fn.fnamemodify(module_path, ":h:h")
     generator_path = plugin_root .. "/generator/target/release/snapshot-generator"
   end
-  
+
   -- Method 2: Use runtimepath to find the plugin
   if not generator_path or vim.fn.executable(generator_path) ~= 1 then
     local rtp = vim.api.nvim_list_runtime_paths()
@@ -139,7 +161,7 @@ M.snapshot = function(opts)
       end
     end
   end
-  
+
   -- Check if the generator exists
   if not generator_path or vim.fn.executable(generator_path) ~= 1 then
     -- Try to provide helpful error message with correct path
@@ -151,7 +173,7 @@ M.snapshot = function(opts)
         break
       end
     end
-    
+
     if plugin_path then
       vim.notify(
         "Snapshot generator not found. Please run:\ncd " .. plugin_path .. "/generator && cargo build --release",
@@ -165,16 +187,16 @@ M.snapshot = function(opts)
     end
     return nil
   end
-  
+
   -- Run the generator
   local cmd = string.format("echo '%s' | %s", json_string:gsub("'", "'\\''"), generator_path)
   local output = vim.fn.system(cmd)
-  
+
   if vim.v.shell_error ~= 0 then
     vim.notify("Failed to generate snapshot: " .. output, vim.log.levels.ERROR)
     return nil
   end
-  
+
   local output_path = output:gsub("%s+", "")
   vim.notify("Snapshot saved to: " .. output_path, vim.log.levels.INFO)
   return output_path

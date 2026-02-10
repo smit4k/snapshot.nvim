@@ -229,11 +229,20 @@ fn generate_image(input: Input) -> Result<()> {
         }
     }
 
-    // Save image
-    img.save(&config.output_path)
-        .context("Failed to save image")?;
+    // Expand tilde and environment variables in output path
+    let expanded_path = shellexpand::full(&config.output_path)
+        .context("Failed to expand output path")?
+        .to_string();
 
-    println!("{}", config.output_path);
+    // Create parent directories if they don't exist
+    if let Some(parent) = std::path::Path::new(&expanded_path).parent() {
+        std::fs::create_dir_all(parent).context("Failed to create parent directories")?;
+    }
+
+    // Save image
+    img.save(&expanded_path).context("Failed to save image")?;
+
+    println!("{}", expanded_path);
     Ok(())
 }
 
