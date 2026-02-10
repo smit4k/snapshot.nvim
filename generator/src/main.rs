@@ -118,7 +118,7 @@ fn generate_image(input: Input) -> Result<()> {
 
     let line_number_width = if config.line_numbers {
         let max_line_num = config.start_line + lines.len();
-        let line_num = format!("{:>4} ", max_line_num);
+        let line_num = format!("{:>4}  ", max_line_num);
         measure_text_width(&line_num, &font, scale)
     } else {
         0
@@ -149,7 +149,7 @@ fn generate_image(input: Input) -> Result<()> {
 
         // Draw line numbers
         if config.line_numbers {
-            let line_num = format!("{:>4} ", config.start_line + line_idx);
+            let line_num = format!("{:>4}  ", config.start_line + line_idx);
             let line_num_color = hex_to_rgba("#5c6370");
             draw_text_mut(
                 &mut img,
