@@ -1,5 +1,7 @@
 use ab_glyph::{FontVec, PxScale};
 use anyhow::{Context, Result};
+use chrono::offset::Local;
+use chrono::DateTime;
 use image::{ImageBuffer, Rgba, RgbaImage};
 use imageproc::drawing::draw_text_mut;
 use serde::Deserialize;
@@ -45,7 +47,9 @@ struct Config {
 
 fn default_output_path() -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    format!("{}/snapshot.png", home)
+    let now: DateTime<Local> = Local::now();
+    let formatted_time = now.format("%Y-%m-%d_%H-%M-%S").to_string();
+    format!("{}/snapshot-{}.png", home, formatted_time)
 }
 fn default_padding() -> u32 {
     80

@@ -2,7 +2,7 @@
 local module = require("snapshot.module")
 
 ---@class Config
----@field output_path string? Path to save the snapshot (defaults to ~/snapshot.png)
+---@field output_path string? Path to save the snapshot (defaults to ~/snapshot-{timestamp}.png)
 ---@field padding number? Padding around the code (default: 80)
 ---@field line_height number? Height of each line in pixels (default: 28)
 ---@field font_size number? Font size in pixels (default: 20)
@@ -11,7 +11,6 @@ local module = require("snapshot.module")
 ---@field line_numbers boolean? Show line numbers (default: false)
 ---@field start_line number? Starting line number (default: 1)
 local config = {
-  output_path = nil,
   padding = 80,
   line_height = 28,
   font_size = 20,
@@ -102,37 +101,47 @@ M.snapshot = function(opts)
   local final_config = vim.tbl_deep_extend("force", M.config, opts)
   final_config.start_line = final_config.start_line or start_line_num
 
-  -- Set default output path if not provided
-  if not final_config.output_path then
-    local home = os.getenv("HOME") or "."
-    final_config.output_path = home .. "/snapshot.png"
-  else
-    -- Expand tilde and environment variables in user-provided paths
+  -- Normalize user-provided output path (do NOT set a default filename here)
+  -- If output_path is nil, we'll remove it from the config so Rust uses its default (timestamped)
+  if final_config.output_path then
+    -- Expand tilde and env vars
     final_config.output_path = vim.fn.expand(final_config.output_path)
-    
-    -- Check if the path is a directory and append default filename if needed
+
+    -- If user passed a directory, let Rust generate the filename
     if vim.fn.isdirectory(final_config.output_path) == 1 then
-      -- Remove trailing slash if present and add default filename
-      final_config.output_path = final_config.output_path:gsub("/$", "") .. "/snapshot.png"
+      final_config.output_path = final_config.output_path:gsub("/$", "")
     elseif final_config.output_path:match("/$") then
-      -- Path ends with / but directory doesn't exist yet, add default filename
-      final_config.output_path = final_config.output_path .. "snapshot.png"
+      -- Trailing slash but dir may not exist yet: still treat as directory
+      final_config.output_path = final_config.output_path:gsub("/$", "")
     end
-    
-    -- Ensure the path has a valid image extension
-    if not final_config.output_path:match("%.[pP][nN][gG]$") 
-       and not final_config.output_path:match("%.[jJ][pP][eE]?[gG]$")
-       and not final_config.output_path:match("%.[wW][eE][bB][pP]$") then
+
+    -- Optional: warn about weird extensions (only when user set a file)
+    if
+      not final_config.output_path:match("%.[pP][nN][gG]$")
+      and not final_config.output_path:match("%.[jJ][pP][eE]?[gG]$")
+      and not final_config.output_path:match("%.[wW][eE][bB][pP]$")
+      and vim.fn.isdirectory(final_config.output_path) == 0
+    then
       vim.notify(
-        "Warning: output_path '" .. final_config.output_path .. "' may not have a valid image extension (.png, .jpg, .jpeg, .webp). This may cause the snapshot to fail.",
+        "Warning: output_path '"
+          .. final_config.output_path
+          .. "' may not have a valid image extension (.png, .jpg, .jpeg, .webp).",
         vim.log.levels.WARN
       )
     end
   end
 
+  -- Build payload, excluding output_path if it's nil so Rust uses its default
+  local config_for_json = {}
+  for k, v in pairs(final_config) do
+    if k ~= "output_path" or v ~= nil then
+      config_for_json[k] = v
+    end
+  end
+
   local payload = {
     lines = buffer_json,
-    config = final_config,
+    config = config_for_json,
   }
 
   local json_string = vim.fn.json_encode(payload)
