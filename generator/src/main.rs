@@ -88,9 +88,19 @@ fn hex_to_rgba(hex: &str) -> Rgba<u8> {
     Rgba([r, g, b, a])
 }
 
-fn estimate_text_width(text: &str, font_size: f32) -> u32 {
-    // Monospace font estimation: roughly 0.6 * font_size per character
-    (text.len() as f32 * font_size * 0.6) as u32
+fn measure_text_width(text: &str, font: &FontVec, scale: PxScale) -> u32 {
+    use ab_glyph::{Font, ScaleFont};
+
+    let scaled_font = font.as_scaled(scale);
+    let mut width = 0.0;
+
+    for c in text.chars() {
+        let glyph_id = scaled_font.glyph_id(c);
+        let advance = scaled_font.h_advance(glyph_id);
+        width += advance;
+    }
+
+    width.ceil() as u32
 }
 
 fn generate_image(input: Input) -> Result<()> {
@@ -108,14 +118,20 @@ fn generate_image(input: Input) -> Result<()> {
 
     let line_number_width = if config.line_numbers {
         let max_line_num = config.start_line + lines.len();
-        let num_digits = max_line_num.to_string().len();
-        estimate_text_width(&"0".repeat(num_digits + 2), config.font_size) // +2 for spacing
+        let line_num = format!("{:>4} ", max_line_num);
+        measure_text_width(&line_num, &font, scale)
     } else {
         0
     };
 
-    let content_width = estimate_text_width(&"M".repeat(max_line_length), config.font_size);
-    let width = content_width + line_number_width + config.padding * 2;
+    // Calculate actual content width based on longest line
+    let max_content_width = lines
+        .iter()
+        .map(|line| measure_text_width(&line.text, &font, scale))
+        .max()
+        .unwrap_or(800);
+
+    let width = max_content_width + line_number_width + config.padding * 2;
     let height = (lines.len() as f32 * config.line_height) as u32 + config.padding * 2;
 
     // Create image
@@ -127,8 +143,9 @@ fn generate_image(input: Input) -> Result<()> {
 
     // Draw lines with syntax highlighting
     for (line_idx, line) in lines.iter().enumerate() {
+        // Calculate Y position with proper vertical alignment
         let y = config.padding as i32 + (line_idx as f32 * config.line_height) as i32;
-        let mut x = config.padding;
+        let mut x = config.padding as f32;
 
         // Draw line numbers
         if config.line_numbers {
@@ -143,7 +160,7 @@ fn generate_image(input: Input) -> Result<()> {
                 &font,
                 &line_num,
             );
-            x += line_number_width;
+            x += line_number_width as f32;
         }
 
         // If no spans, just draw the whole line in default color
@@ -168,8 +185,6 @@ fn generate_image(input: Input) -> Result<()> {
             if span.start > last_end {
                 let unstyled_text = &line.text[last_end..span.start];
                 let default_color = hex_to_rgba("#abb2bf");
-                let text_width =
-                    estimate_text_width(&line.text[last_end..span.start], config.font_size);
                 draw_text_mut(
                     &mut img,
                     default_color,
@@ -179,7 +194,8 @@ fn generate_image(input: Input) -> Result<()> {
                     &font,
                     unstyled_text,
                 );
-                x += text_width;
+                let text_width = measure_text_width(unstyled_text, &font, scale);
+                x += text_width as f32;
             }
 
             // Draw the span
@@ -192,8 +208,8 @@ fn generate_image(input: Input) -> Result<()> {
 
             draw_text_mut(&mut img, color, x as i32, y, scale, &font, span_text);
 
-            let text_width = estimate_text_width(span_text, config.font_size);
-            x += text_width;
+            let text_width = measure_text_width(span_text, &font, scale);
+            x += text_width as f32;
             last_end = span.end;
         }
 
