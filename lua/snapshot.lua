@@ -2,7 +2,8 @@
 local module = require("snapshot.module")
 
 ---@class Config
----@field output_path string? Path to save the snapshot (defaults to ~/snapshot-{timestamp}.png)
+---@field snapshot_dir string? Directory to save snapshots (defaults to $HOME)
+---@field output_path string? Path to save the snapshot (defaults to snapshot_dir/snapshot-{timestamp}.png)
 ---@field padding number? Padding around the code (default: 80)
 ---@field line_height number? Height of each line in pixels (default: 28)
 ---@field font_size number? Font size in pixels (default: 20)
@@ -101,6 +102,27 @@ M.snapshot = function(opts)
   local final_config = vim.tbl_deep_extend("force", M.config, opts)
   final_config.start_line = final_config.start_line or start_line_num
 
+  -- Handle snapshot_dir configuration
+  if final_config.snapshot_dir then
+    -- Expand tilde and env vars
+    final_config.snapshot_dir = vim.fn.expand(final_config.snapshot_dir)
+    -- Remove trailing slash
+    final_config.snapshot_dir = final_config.snapshot_dir:gsub("/$", "")
+    
+    -- Validate that snapshot_dir is or will be a directory
+    if vim.fn.isdirectory(final_config.snapshot_dir) == 0 then
+      -- Check if it exists as a file (error condition)
+      if vim.fn.filereadable(final_config.snapshot_dir) == 1 then
+        vim.notify(
+          "Error: snapshot_dir '" .. final_config.snapshot_dir .. "' exists but is not a directory.",
+          vim.log.levels.ERROR
+        )
+        return nil
+      end
+      -- Directory doesn't exist yet, which is fine (Rust will create it)
+    end
+  end
+
   -- Normalize user-provided output path (do NOT set a default filename here)
   -- If output_path is nil, we'll remove it from the config so Rust uses its default (timestamped)
   if final_config.output_path then
@@ -131,10 +153,10 @@ M.snapshot = function(opts)
     end
   end
 
-  -- Build payload, excluding output_path if it's nil so Rust uses its default
+  -- Build payload, excluding output_path/snapshot_dir if they're nil so Rust uses its default
   local config_for_json = {}
   for k, v in pairs(final_config) do
-    if k ~= "output_path" or v ~= nil then
+    if (k ~= "output_path" and k ~= "snapshot_dir") or v ~= nil then
       config_for_json[k] = v
     end
   end

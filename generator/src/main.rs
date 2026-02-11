@@ -27,8 +27,10 @@ struct Line {
 
 #[derive(Debug, Deserialize)]
 struct Config {
-    #[serde(default = "default_output_path")]
-    output_path: String,
+    #[serde(default)]
+    snapshot_dir: Option<String>,
+    #[serde(default)]
+    output_path: Option<String>,
     #[serde(default = "default_padding")]
     padding: u32,
     #[serde(default = "default_line_height")]
@@ -45,12 +47,6 @@ struct Config {
     start_line: usize,
 }
 
-fn default_output_path() -> String {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let now: DateTime<Local> = Local::now();
-    let formatted_time = now.format("%Y-%m-%d_%H-%M-%S").to_string();
-    format!("{}/snapshot-{}.png", home, formatted_time)
-}
 fn default_padding() -> u32 {
     80
 }
@@ -110,6 +106,25 @@ fn measure_text_width(text: &str, font: &FontVec, scale: PxScale) -> u32 {
 fn generate_image(input: Input) -> Result<()> {
     let config = input.config;
     let lines = input.lines;
+
+    // Determine output path
+    let output_path = if let Some(path) = config.output_path {
+        // User provided explicit output_path
+        path
+    } else {
+        // Generate timestamped filename
+        let now: DateTime<Local> = Local::now();
+        let formatted_time = now.format("%Y-%m-%d_%H-%M-%S").to_string();
+        let filename = format!("snapshot-{}.png", formatted_time);
+
+        // Use snapshot_dir if provided, otherwise use $HOME
+        if let Some(dir) = config.snapshot_dir {
+            format!("{}/{}", dir, filename)
+        } else {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            format!("{}/{}", home, filename)
+        }
+    };
 
     // Font setup - use a monospace font
     let font_data = include_bytes!("../fonts/FiraCode-Regular.ttf");
@@ -234,7 +249,7 @@ fn generate_image(input: Input) -> Result<()> {
     }
 
     // Expand tilde and environment variables in output path
-    let expanded_path = shellexpand::full(&config.output_path)
+    let expanded_path = shellexpand::full(&output_path)
         .context("Failed to expand output path")?
         .to_string();
 
