@@ -40,6 +40,8 @@ struct Config {
     font_size: f32,
     #[serde(default = "default_background")]
     background: String,
+    #[serde(default = "default_clipboard")]
+    clipboard: bool,
     #[serde(default = "default_shadow")]
     shadow: bool,
     #[serde(default = "default_line_numbers")]
@@ -59,6 +61,9 @@ fn default_font_size() -> f32 {
 }
 fn default_background() -> String {
     "#282c34".to_string()
+}
+fn default_clipboard() -> bool {
+    true
 }
 fn default_shadow() -> bool {
     true
@@ -249,12 +254,6 @@ fn generate_image(input: Input) -> Result<()> {
         }
     }
 
-    let img_data = arboard::ImageData {
-        width: img.width() as usize,
-        height: img.height() as usize,
-        bytes: img.as_raw().into(),
-    };
-
     // Expand tilde and environment variables in output path
     let expanded_path = shellexpand::full(&output_path)
         .context("Failed to expand output path")?
@@ -265,11 +264,19 @@ fn generate_image(input: Input) -> Result<()> {
         std::fs::create_dir_all(parent).context("Failed to create parent directories")?;
     }
 
-    let mut clipboard = Clipboard::new().unwrap();
+    if config.clipboard {
+        let img_data = arboard::ImageData {
+            width: img.width() as usize,
+            height: img.height() as usize,
+            bytes: img.as_raw().into(),
+        };
 
-    clipboard.set_image(img_data).unwrap_or_else(|e| {
-        eprintln!("Warning: Failed to copy to clipboard: {}", e);
-    });
+        let mut clipboard = Clipboard::new().unwrap();
+
+        clipboard.set_image(img_data).unwrap_or_else(|e| {
+            eprintln!("Warning: Failed to copy to clipboard: {}", e);
+        });
+    }
 
     // Save image
     img.save(&expanded_path).context("Failed to save image")?;

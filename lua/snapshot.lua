@@ -8,6 +8,7 @@ local module = require("snapshot.module")
 ---@field line_height number? Height of each line in pixels (default: 28)
 ---@field font_size number? Font size in pixels (default: 20)
 ---@field background string? Background color in hex format (default: #282c34)
+---@field clipboard boolean? Enable saving snapshot to clipboard
 ---@field shadow boolean? Enable shadow effect (default: true)
 ---@field line_numbers boolean? Show line numbers (default: false)
 ---@field start_line number? Starting line number (default: 1)
@@ -16,6 +17,7 @@ local config = {
   line_height = 28,
   font_size = 20,
   background = "#282c34",
+  clipboard = true,
   shadow = true,
   line_numbers = false,
   start_line = 1,
@@ -108,7 +110,7 @@ M.snapshot = function(opts)
     final_config.snapshot_dir = vim.fn.expand(final_config.snapshot_dir)
     -- Remove trailing slash
     final_config.snapshot_dir = final_config.snapshot_dir:gsub("/$", "")
-    
+
     -- Validate that snapshot_dir is or will be a directory
     if vim.fn.isdirectory(final_config.snapshot_dir) == 0 then
       -- Check if it exists as a file (error condition)
