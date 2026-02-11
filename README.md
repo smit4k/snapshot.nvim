@@ -25,6 +25,7 @@ return {
   build = "cd generator && cargo build --release",
   config = function()
     require("snapshot").setup({
+        snapshot_dir = "~/Pictures/snapshots", -- Directory where snapshot images are saved to (optional, defaults to $HOME)
         padding = 80,
         line_height = 28,
         font_size = 20,
@@ -39,8 +40,8 @@ return {
 
 ## Usage
 
-Select code in Visual mode and run `:Snapshot`. The snapshot saves to `~/snapshot-{timestamp}.png`
+Select code in Visual mode and run `:Snapshot`.
 
 ## Contributing
 
-Contributions are welcome! Please open an issue to discuss your ideas or problems or submit a pull request with your changes.
+Contributions are welcome! Please open an [issue](https://github.com/smit4k/snapshot.nvim/issues) to discuss your ideas or problems or submit a [pull request](https://github.com/smit4k/snapshot.nvim/pulls) with your changes.
