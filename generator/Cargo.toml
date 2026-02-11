@@ -8,6 +8,7 @@ name = "snapshot-generator"
 path = "src/main.rs"
 
 [dependencies]
+arboard = "3.6.1"
 image = "0.25"
 imageproc = "0.25"
 ab_glyph = "0.2"

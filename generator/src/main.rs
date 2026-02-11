@@ -1,5 +1,6 @@
 use ab_glyph::{FontVec, PxScale};
 use anyhow::{Context, Result};
+use arboard::Clipboard;
 use chrono::offset::Local;
 use chrono::DateTime;
 use image::{ImageBuffer, Rgba, RgbaImage};
@@ -248,6 +249,12 @@ fn generate_image(input: Input) -> Result<()> {
         }
     }
 
+    let img_data = arboard::ImageData {
+        width: img.width() as usize,
+        height: img.height() as usize,
+        bytes: img.as_raw().into(),
+    };
+
     // Expand tilde and environment variables in output path
     let expanded_path = shellexpand::full(&output_path)
         .context("Failed to expand output path")?
@@ -257,6 +264,12 @@ fn generate_image(input: Input) -> Result<()> {
     if let Some(parent) = std::path::Path::new(&expanded_path).parent() {
         std::fs::create_dir_all(parent).context("Failed to create parent directories")?;
     }
+
+    let mut clipboard = Clipboard::new().unwrap();
+
+    clipboard.set_image(img_data).unwrap_or_else(|e| {
+        eprintln!("Warning: Failed to copy to clipboard: {}", e);
+    });
 
     // Save image
     img.save(&expanded_path).context("Failed to save image")?;
