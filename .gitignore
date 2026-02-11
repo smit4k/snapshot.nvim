@@ -1,4 +1,5 @@
 vendor/plenary.nvim
+vendor/
 
 # Rust build artifacts
 generator/target/
