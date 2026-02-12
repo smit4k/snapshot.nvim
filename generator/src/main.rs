@@ -42,6 +42,8 @@ struct Config {
     font_size: f32,
     #[serde(default = "default_background")]
     background: String,
+    #[serde(default = "default_foreground")]
+    foreground: String,
     #[serde(default = "default_clipboard")]
     clipboard: bool,
     #[serde(default = "default_shadow")]
@@ -68,6 +70,9 @@ fn default_font_size() -> f32 {
 }
 fn default_background() -> String {
     "#282c34".to_string()
+}
+fn default_foreground() -> String {
+    "#abb2bf".to_string()
 }
 fn default_clipboard() -> bool {
     true
@@ -234,6 +239,9 @@ fn generate_image(input: Input) -> Result<()> {
     // Draw shadow if enabled (disabled for now - can be added with a blur filter)
     // Shadow rendering is complex and optional, so we'll skip it for simplicity
 
+    // Default text color from the editor's Normal highlight group foreground
+    let default_fg = hex_to_rgba(&config.foreground);
+
     // Draw lines with syntax highlighting (all coordinates in scaled pixels)
     for (line_idx, line) in lines.iter().enumerate() {
         // Calculate Y position with proper vertical alignment
@@ -258,16 +266,7 @@ fn generate_image(input: Input) -> Result<()> {
 
         // If no spans, just draw the whole line in default color
         if line.spans.is_empty() {
-            let default_color = hex_to_rgba("#abb2bf");
-            draw_text_mut(
-                &mut img,
-                default_color,
-                x as i32,
-                y,
-                scale,
-                &font,
-                &line.text,
-            );
+            draw_text_mut(&mut img, default_fg, x as i32, y, scale, &font, &line.text);
             continue;
         }
 
@@ -277,10 +276,9 @@ fn generate_image(input: Input) -> Result<()> {
             // Draw unstyled text before this span
             if span.start > last_end {
                 let unstyled_text = &line.text[last_end..span.start];
-                let default_color = hex_to_rgba("#abb2bf");
                 draw_text_mut(
                     &mut img,
-                    default_color,
+                    default_fg,
                     x as i32,
                     y,
                     scale,
@@ -297,7 +295,7 @@ fn generate_image(input: Input) -> Result<()> {
                 .fg
                 .as_ref()
                 .map(|c| hex_to_rgba(c))
-                .unwrap_or(hex_to_rgba("#abb2bf"));
+                .unwrap_or(default_fg);
 
             draw_text_mut(&mut img, color, x as i32, y, scale, &font, span_text);
 
@@ -309,10 +307,9 @@ fn generate_image(input: Input) -> Result<()> {
         // Draw any remaining unstyled text
         if last_end < line.text.len() {
             let remaining_text = &line.text[last_end..];
-            let default_color = hex_to_rgba("#abb2bf");
             draw_text_mut(
                 &mut img,
-                default_color,
+                default_fg,
                 x as i32,
                 y,
                 scale,
