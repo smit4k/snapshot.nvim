@@ -7,11 +7,15 @@ Table of Contents                         *my-template-docs-table-of-contents*
   - Installation                               |my-template-docs-installation|
   - Usage                                             |my-template-docs-usage|
   - Contributing                               |my-template-docs-contributing|
-snapshot.nvimCreate beautiful screenshots of your code, directly inside Neovim
+snapshot.nvimCreate beautiful screenshots of your code, directly inside Neovim>
+    <p align='center'>Inspired by VSCode's <a href="https://github.com/octref/polacode">Polacode Extension</a></p>
+<
+
+
 FEATURES                                           *my-template-docs-features*
 
 - Code snapshots with syntax highlighting
-- Customizable settings (line numbers, padding, font, etc.)
+- Customizable settings (line numbers, padding, shadow, render scale, etc.)
 - Blazingly fast Rust renderer
 
 
