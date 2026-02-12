@@ -4,11 +4,12 @@
 <p align='center'>
   <b>Create beautiful screenshots of your code, directly inside Neovim</b>
 </p>
+    <p align='center'>Inspired by VSCode's <a href="https://github.com/octref/polacode">Polacode Extension</a></p>
 
 ## Features
 
 - 📸 Code snapshots with syntax highlighting
-- 🎨 Customizable settings (line numbers, padding, font, etc.)
+- 🎨 Customizable settings (line numbers, padding, shadow, render scale, etc.)
 - ⚡️ Blazingly fast Rust renderer
 
 ## Installation
