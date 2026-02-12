@@ -4,6 +4,7 @@ local module = require("snapshot.module")
 ---@class Config
 ---@field snapshot_dir string? Directory to save snapshots (defaults to $HOME)
 ---@field output_path string? Path to save the snapshot (defaults to snapshot_dir/snapshot-{timestamp}.png)
+---@field scale number? Resolution scale factor for HiDPI/Retina rendering (default: 2)
 ---@field padding number? Padding around the code (default: 80)
 ---@field line_height number? Height of each line in pixels (default: 28)
 ---@field font_size number? Font size in pixels (default: 20)
@@ -13,6 +14,7 @@ local module = require("snapshot.module")
 ---@field line_numbers boolean? Show line numbers (default: false)
 ---@field start_line number? Starting line number (default: 1)
 local config = {
+  scale = 2,
   padding = 80,
   line_height = 28,
   font_size = 20,
