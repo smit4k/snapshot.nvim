@@ -1,5 +1,16 @@
 -- main module file
 local module = require("snapshot.module")
+local highlights = require("snapshot.highlights")
+
+--- Resolve the Normal highlight group to get the editor's background and foreground colors.
+--- Falls back to sensible defaults if the highlight group is not set.
+local function get_editor_colors()
+  local normal = highlights.resolve_hl("Normal")
+  return {
+    bg = normal.bg or "#282c34",
+    fg = normal.fg or "#abb2bf",
+  }
+end
 
 ---@class Config
 ---@field snapshot_dir string? Directory to save snapshots (defaults to $HOME)
@@ -8,7 +19,8 @@ local module = require("snapshot.module")
 ---@field padding number? Padding around the code (default: 80)
 ---@field line_height number? Height of each line in pixels (default: 28)
 ---@field font_size number? Font size in pixels (default: 20)
----@field background string? Background color in hex format (default: #282c34)
+---@field background string? Background color in hex format (default: from Normal highlight group)
+---@field foreground string? Default text color in hex format (default: from Normal highlight group)
 ---@field clipboard boolean? Enable saving snapshot to clipboard
 ---@field shadow boolean? Enable shadow effect (default: true)
 ---@field line_numbers boolean? Show line numbers (default: false)
@@ -19,7 +31,6 @@ local config = {
   padding = 80,
   line_height = 28,
   font_size = 20,
-  background = "#282c34",
   clipboard = true,
   shadow = true,
   line_numbers = false,
@@ -107,6 +118,16 @@ M.snapshot = function(opts)
   -- Merge config with opts
   local final_config = vim.tbl_deep_extend("force", M.config, opts)
   final_config.start_line = final_config.start_line or start_line_num
+
+  -- Resolve background and foreground from the editor's Normal highlight group
+  -- if the user hasn't explicitly configured them.
+  local editor_colors = get_editor_colors()
+  if not final_config.background then
+    final_config.background = editor_colors.bg
+  end
+  if not final_config.foreground then
+    final_config.foreground = editor_colors.fg
+  end
 
   -- Handle snapshot_dir configuration
   if final_config.snapshot_dir then
