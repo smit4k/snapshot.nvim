@@ -32,6 +32,8 @@ struct Config {
     snapshot_dir: Option<String>,
     #[serde(default)]
     output_path: Option<String>,
+    #[serde(default = "default_scale")]
+    scale: f32,
     #[serde(default = "default_padding")]
     padding: u32,
     #[serde(default = "default_line_height")]
@@ -52,6 +54,9 @@ struct Config {
 
 fn default_padding() -> u32 {
     80
+}
+fn default_scale() -> f32 {
+    2.0
 }
 fn default_line_height() -> f32 {
     28.0
@@ -133,14 +138,24 @@ fn generate_image(input: Input) -> Result<()> {
     };
 
     // Font setup - use a monospace font
-    let font_data = include_bytes!("../fonts/FiraCode-Regular.ttf");
+    let font_data = include_bytes!("../fonts/JetBrainsMono-Regular.ttf");
     let font = FontVec::try_from_vec(font_data.to_vec()).context("Failed to load font")?;
 
-    let scale = PxScale::from(config.font_size);
+    // Apply resolution scale factor for crisp/HiDPI rendering.
+    // All rendering dimensions are multiplied by `scale` so text is rasterized
+    // at a higher resolution, producing sharp output on Retina displays.
+    let render_scale = if config.scale > 0.0 {
+        config.scale
+    } else {
+        2.0
+    };
+    let scaled_font_size = config.font_size * render_scale;
+    let scaled_padding = (config.padding as f32 * render_scale) as u32;
+    let scaled_line_height = config.line_height * render_scale;
 
-    // Calculate image dimensions
-    let max_line_length = lines.iter().map(|l| l.text.len()).max().unwrap_or(80);
+    let scale = PxScale::from(scaled_font_size);
 
+    // Calculate image dimensions (all in scaled pixels)
     let line_number_width = if config.line_numbers {
         let max_line_num = config.start_line + lines.len();
         let line_num = format!("{:>4}  ", max_line_num);
@@ -154,23 +169,23 @@ fn generate_image(input: Input) -> Result<()> {
         .iter()
         .map(|line| measure_text_width(&line.text, &font, scale))
         .max()
-        .unwrap_or(800);
+        .unwrap_or((800.0 * render_scale) as u32);
 
-    let width = max_content_width + line_number_width + config.padding * 2;
-    let height = (lines.len() as f32 * config.line_height) as u32 + config.padding * 2;
+    let width = max_content_width + line_number_width + scaled_padding * 2;
+    let height = (lines.len() as f32 * scaled_line_height) as u32 + scaled_padding * 2;
 
-    // Create image
+    // Create image at scaled resolution
     let bg_color = hex_to_rgba(&config.background);
     let mut img: RgbaImage = ImageBuffer::from_pixel(width, height, bg_color);
 
     // Draw shadow if enabled (disabled for now - can be added with a blur filter)
     // Shadow rendering is complex and optional, so we'll skip it for simplicity
 
-    // Draw lines with syntax highlighting
+    // Draw lines with syntax highlighting (all coordinates in scaled pixels)
     for (line_idx, line) in lines.iter().enumerate() {
         // Calculate Y position with proper vertical alignment
-        let y = config.padding as i32 + (line_idx as f32 * config.line_height) as i32;
-        let mut x = config.padding as f32;
+        let y = scaled_padding as i32 + (line_idx as f32 * scaled_line_height) as i32;
+        let mut x = scaled_padding as f32;
 
         // Draw line numbers
         if config.line_numbers {
