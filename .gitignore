@@ -1,6 +1,9 @@
 vendor/plenary.nvim
 vendor/
 
+
+.DS_STORE
+
 # Rust build artifacts
 generator/target/
 generator/Cargo.lock
