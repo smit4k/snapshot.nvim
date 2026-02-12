@@ -82,7 +82,7 @@ fn default_start_line() -> usize {
     1
 }
 fn default_border_radius() -> u32 {
-    12
+    5
 }
 
 #[derive(Debug, Deserialize)]

@@ -13,7 +13,7 @@ local module = require("snapshot.module")
 ---@field shadow boolean? Enable shadow effect (default: true)
 ---@field line_numbers boolean? Show line numbers (default: false)
 ---@field start_line number? Starting line number (default: 1)
----@field border_radius number? Corner radius in pixels (default: 12)
+---@field border_radius number? Corner radius in pixels (default: 5)
 local config = {
   scale = 2,
   padding = 80,
@@ -24,7 +24,7 @@ local config = {
   shadow = true,
   line_numbers = false,
   start_line = 1,
-  border_radius = 12,
+  border_radius = 5,
 }
 
 ---@class MyModule
