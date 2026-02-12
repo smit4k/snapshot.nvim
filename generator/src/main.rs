@@ -50,6 +50,8 @@ struct Config {
     line_numbers: bool,
     #[serde(default = "default_start_line")]
     start_line: usize,
+    #[serde(default = "default_border_radius")]
+    border_radius: u32,
 }
 
 fn default_padding() -> u32 {
@@ -78,6 +80,9 @@ fn default_line_numbers() -> bool {
 }
 fn default_start_line() -> usize {
     1
+}
+fn default_border_radius() -> u32 {
+    12
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,6 +117,54 @@ fn measure_text_width(text: &str, font: &FontVec, scale: PxScale) -> u32 {
     }
 
     width.ceil() as u32
+}
+
+fn apply_rounded_corners(img: &mut RgbaImage, radius: u32) {
+    let (width, height) = img.dimensions();
+    let radius_f = radius as f32;
+
+    // Iterate through each pixel in the image
+    for y in 0..height {
+        for x in 0..width {
+            // Determine which corner (if any) this pixel belongs to
+            let corner_info = if x < radius && y < radius {
+                // Top-left corner: center at (radius-1, radius-1)
+                Some((radius as f32 - 0.5, radius as f32 - 0.5))
+            } else if x >= width - radius && y < radius {
+                // Top-right corner
+                Some((width as f32 - radius as f32 - 0.5, radius as f32 - 0.5))
+            } else if x < radius && y >= height - radius {
+                // Bottom-left corner
+                Some((radius as f32 - 0.5, height as f32 - radius as f32 - 0.5))
+            } else if x >= width - radius && y >= height - radius {
+                // Bottom-right corner
+                Some((
+                    width as f32 - radius as f32 - 0.5,
+                    height as f32 - radius as f32 - 0.5,
+                ))
+            } else {
+                None
+            };
+
+            if let Some((corner_x, corner_y)) = corner_info {
+                // Calculate distance from corner center to pixel center
+                let dx = x as f32 + 0.5 - corner_x;
+                let dy = y as f32 + 0.5 - corner_y;
+                let distance = (dx * dx + dy * dy).sqrt();
+
+                let pixel = img.get_pixel_mut(x, y);
+
+                if distance > radius_f {
+                    // Outside the rounded corner - make fully transparent
+                    pixel[3] = 0;
+                } else if distance > radius_f - 1.5 {
+                    // Anti-aliasing on the edge for smooth corners
+                    let alpha = ((radius_f - distance) / 1.5).clamp(0.0, 1.0);
+                    pixel[3] = (pixel[3] as f32 * alpha) as u8;
+                }
+            }
+        }
+    }
 }
 
 fn generate_image(input: Input) -> Result<()> {
@@ -267,6 +320,12 @@ fn generate_image(input: Input) -> Result<()> {
                 remaining_text,
             );
         }
+    }
+
+    // Apply rounded corners by masking the alpha channel
+    if config.border_radius > 0 {
+        let scaled_radius = (config.border_radius as f32 * render_scale) as u32;
+        apply_rounded_corners(&mut img, scaled_radius);
     }
 
     // Expand tilde and environment variables in output path
