@@ -2,6 +2,9 @@
 local module = require("snapshot.module")
 local highlights = require("snapshot.highlights")
 
+local is_windows = vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1
+local generator_bin = is_windows and "snapshot-generator.exe" or "snapshot-generator"
+
 --- Resolve the Normal highlight group to get the editor's background and foreground colors.
 --- Falls back to sensible defaults if the highlight group is not set.
 local function get_editor_colors()
@@ -203,7 +206,7 @@ M.snapshot = function(opts)
   if snapshot_module and snapshot_module.__file then
     local module_path = snapshot_module.__file
     local plugin_root = vim.fn.fnamemodify(module_path, ":h:h")
-    generator_path = plugin_root .. "/generator/target/release/snapshot-generator"
+    generator_path = plugin_root .. "/generator/target/release/" .. generator_bin
   end
 
   -- Method 2: Use runtimepath to find the plugin
@@ -211,7 +214,7 @@ M.snapshot = function(opts)
     local rtp = vim.api.nvim_list_runtime_paths()
     for _, path in ipairs(rtp) do
       if path:match("snapshot%.nvim") or path:match("snapshot$") then
-        local test_path = path .. "/generator/target/release/snapshot-generator"
+        local test_path = path .. "/generator/target/release/" .. generator_bin
         if vim.fn.executable(test_path) == 1 then
           generator_path = test_path
           break
@@ -246,9 +249,8 @@ M.snapshot = function(opts)
     return nil
   end
 
-  -- Run the generator
-  local cmd = string.format("echo '%s' | %s", json_string:gsub("'", "'\\''"), generator_path)
-  local output = vim.fn.system(cmd)
+  -- Run the generator (pass JSON via stdin using vim.fn.system's second argument)
+  local output = vim.fn.system({ generator_path }, json_string)
 
   if vim.v.shell_error ~= 0 then
     vim.notify("Failed to generate snapshot: " .. output, vim.log.levels.ERROR)

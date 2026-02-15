@@ -22,7 +22,11 @@ end, { range = true, nargs = "?" })
 
 -- Debug command to check paths and installation
 vim.api.nvim_create_user_command("SnapshotDebug", function(opts)
+  local is_windows = vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1
+  local bin_name = is_windows and "snapshot-generator.exe" or "snapshot-generator"
+
   print("=== Snapshot Debug Info ===")
+  print("Platform: " .. (is_windows and "Windows" or "Unix"))
   print("opts.args type: " .. type(opts.args))
   print("opts.args value: " .. vim.inspect(opts.args))
   print("")
@@ -36,7 +40,7 @@ vim.api.nvim_create_user_command("SnapshotDebug", function(opts)
       found_plugin = true
       print("✓ Plugin path: " .. path)
 
-      local gen_path = path .. "/generator/target/release/snapshot-generator"
+      local gen_path = path .. "/generator/target/release/" .. bin_name
       if vim.fn.executable(gen_path) == 1 then
         print("✓ Generator found: " .. gen_path)
         local size = vim.fn.getfsize(gen_path)
