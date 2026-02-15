@@ -5,7 +5,7 @@
 | Command | Description |
 |---------|-------------|
 | `:Snapshot` | Create snapshot of visual selection or entire buffer |
-| `:SnapshotVisual` | Create snapshot of current visual selection |
+| `:SnapshotDebug` | Print debug info about plugin paths and generator binary |
 
 ## Keybindings
 

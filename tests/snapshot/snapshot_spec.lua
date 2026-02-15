@@ -1,4 +1,4 @@
-local plugin = require("snapshot.nvim")
+local plugin = require("snapshot")
 
 describe("setup", function()
   it("works with default", function()

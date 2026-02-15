@@ -1,12 +1,16 @@
-local snapshot = require("snapshot")
+local ok, snapshot = pcall(require, "snapshot")
+if not ok then
+  vim.notify("snapshot.nvim: failed to load module: " .. tostring(snapshot), vim.log.levels.ERROR)
+  return
+end
 
 -- Main snapshot command - works in both normal and visual mode
 vim.api.nvim_create_user_command("Snapshot", function(opts)
   local config_override = {}
   -- Check if args exists and is not empty or whitespace
   if opts.args and opts.args:match("%S") then
-    local ok, decoded = pcall(vim.fn.json_decode, opts.args)
-    if ok then
+    local decode_ok, decoded = pcall(vim.fn.json_decode, opts.args)
+    if decode_ok then
       config_override = decoded
     else
       vim.notify("Invalid JSON arguments: " .. opts.args, vim.log.levels.ERROR)
