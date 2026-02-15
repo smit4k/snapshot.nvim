@@ -6,7 +6,7 @@ return {
   build = "cd generator && cargo build --release",
   
   -- Lazy load on command or keymap
-  cmd = { "Snapshot", "SnapshotVisual" },
+  cmd = { "Snapshot", "SnapshotDebug" },
   keys = {
     { "<leader>cs", mode = { "n", "v" }, desc = "Code Snapshot" },
   },
