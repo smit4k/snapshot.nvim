@@ -24,9 +24,10 @@ Ex: using lazy.nvim
 return {
   "smit4k/snapshot.nvim",
   build = "cd generator && cargo build --release",
+  cmd = { "Snapshot", "SnapshotDebug" },
   config = function()
     require("snapshot").setup({
-        snapshot_dir = "~/Pictures/snapshots", -- Directory where snapshot images are saved to (optional, defaults to $HOME)
+        snapshot_dir = "~/Pictures/snapshots", -- Directory where snapshot images are saved to (optional)
         padding = 80,
         line_height = 28,
         font_size = 20,
@@ -34,7 +35,7 @@ return {
         shadow = true,
         line_numbers = false,
         start_line = 1,
-  )}
+    })
   end,
 }
 ```
