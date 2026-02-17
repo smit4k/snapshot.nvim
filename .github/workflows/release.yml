@@ -1,14 +1,80 @@
-name: "release"
+# .github/workflows/release.yml
+name: Release
+
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
+
 jobs:
-  luarocks-upload:
-    runs-on: ubuntu-22.04
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: snapshot-generator-linux-x86_64
+
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: snapshot-generator-macos-aarch64
+
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: snapshot-generator-macos-x86_64
+
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: snapshot-generator-windows-x86_64.exe
+
+    runs-on: ${{ matrix.os }}
+
     steps:
-      - uses: actions/checkout@v4
-      - name: LuaRocks Upload
-        uses: nvim-neorocks/luarocks-tag-release@v7
-        env:
-          LUAROCKS_API_KEY: ${{ secrets.LUAROCKS_API_KEY }}
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build
+        working-directory: generator
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Rename binary (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          cp generator/target/${{ matrix.target }}/release/snapshot-generator ${{ matrix.artifact }}
+
+      - name: Rename binary (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          cp generator/target/${{ matrix.target }}/release/snapshot-generator.exe ${{ matrix.artifact }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            snapshot-generator-linux-x86_64/snapshot-generator-linux-x86_64
+            snapshot-generator-macos-aarch64/snapshot-generator-macos-aarch64
+            snapshot-generator-macos-x86_64/snapshot-generator-macos-x86_64
+            snapshot-generator-windows-x86_64.exe/snapshot-generator-windows-x86_64.exe
+          generate_release_notes: true
