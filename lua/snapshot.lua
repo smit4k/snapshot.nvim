@@ -54,6 +54,73 @@ M.setup = function(args)
   M.config = vim.tbl_deep_extend("force", M.config, args or {})
 end
 
+local VERSION = "v0.1.0"
+
+M.install = function()
+  local os_name = jit.os:lower() -- "linux", "osx", "windows"
+  local arch = jit.arch -- "x64", "arm64"
+
+  -- Map to GitHub release artifact names
+  local filename
+  if os_name == "linux" and arch == "x64" then
+    filename = "snapshot-generator-linux-x86_64"
+  elseif os_name == "osx" and arch == "arm64" then
+    filename = "snapshot-generator-macos-aarch64"
+  elseif os_name == "osx" and arch == "x64" then
+    filename = "snapshot-generator-macos-x86_64"
+  elseif os_name == "windows" then
+    filename = "snapshot-generator-windows-x86_64.exe"
+  else
+    vim.notify("Unsupported platform: " .. os_name .. " " .. arch, vim.log.levels.ERROR)
+    return false
+  end
+
+  -- Find plugin root path
+  local plugin_root = nil
+  local rtp = vim.api.nvim_list_runtime_paths()
+  for _, path in ipairs(rtp) do
+    if path:match("snapshot%.nvim") or path:match("snapshot$") then
+      plugin_root = path
+      break
+    end
+  end
+
+  if not plugin_root then
+    vim.notify("Could not find snapshot.nvim plugin path", vim.log.levels.ERROR)
+    return false
+  end
+
+  local url = "https://github.com/smit4k/snapshot.nvim/releases/download/" .. VERSION .. "/" .. filename
+  local dest_dir = plugin_root .. "/generator/target/release/"
+  local dest = dest_dir .. generator_bin
+
+  -- Create destination directory
+  vim.fn.mkdir(dest_dir, "p")
+
+  vim.notify("Downloading snapshot generator...", vim.log.levels.INFO)
+
+  local result = vim.fn.system({ "curl", "-fLo", dest, "--create-dirs", url })
+
+  if vim.v.shell_error ~= 0 then
+    vim.notify("Download failed, falling back to cargo build...", vim.log.levels.WARN)
+
+    -- Fallback to cargo build
+    local cargo_result = vim.fn.system({ "cargo", "build", "--release" }, nil)
+    if vim.v.shell_error ~= 0 then
+      vim.notify("Cargo build failed: " .. cargo_result, vim.log.levels.ERROR)
+      return false
+    end
+  end
+
+  -- Make binary executable on Unix
+  if not is_windows then
+    vim.fn.system({ "chmod", "+x", dest })
+  end
+
+  vim.notify("Snapshot generator installed successfully!", vim.log.levels.INFO)
+  return true
+end
+
 M.hello = function()
   return module.my_first_function(M.config.opt)
 end
