@@ -52,6 +52,19 @@ M.config = config
 -- you can also put some validation here for those.
 M.setup = function(args)
   M.config = vim.tbl_deep_extend("force", M.config, args or {})
+
+  -- Auto-install binary if not found
+  local rtp = vim.api.nvim_list_runtime_paths()
+  for _, path in ipairs(rtp) do
+    if path:match("snapshot%.nvim") or path:match("snapshot$") then
+      local bin = path .. "/generator/target/release/" .. generator_bin
+      if vim.fn.executable(bin) ~= 1 then
+        vim.notify("snapshot.nvim: binary not found, installing...", vim.log.levels.INFO)
+        M.install()
+      end
+      break
+    end
+  end
 end
 
 local VERSION = "v0.1.0"
