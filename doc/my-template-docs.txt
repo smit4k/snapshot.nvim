@@ -21,8 +21,7 @@ FEATURES                                           *my-template-docs-features*
 
 INSTALLATION                                   *my-template-docs-installation*
 
-**Prerequisites**: Neovim >= 0.9.0, Rust & Cargo
-<https://rust-lang.org/tools/install/>
+**Prerequisites**: Neovim >= 0.9.0
 
 Use your favorite plugin manager!
 
@@ -31,18 +30,16 @@ Ex: using lazy.nvim
 >lua
     return {
       "smit4k/snapshot.nvim",
-      build = "cd generator && cargo build --release",
-      cmd = { "Snapshot", "SnapshotDebug" },
       config = function()
         require("snapshot").setup({
             snapshot_dir = "~/Pictures/snapshots", -- Directory where snapshot images are saved to (optional)
             padding = 80,
             line_height = 28,
             font_size = 20,
-            background = "#282c34",
             shadow = true,
             line_numbers = false,
             start_line = 1,
+            border-radius: 5,
         })
       end,
     }
