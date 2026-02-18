@@ -32,7 +32,7 @@ return {
         shadow = true,
         line_numbers = false,
         start_line = 1,
-        border-radius: 5,
+        border_radius = 5,
     })
   end,
 }
