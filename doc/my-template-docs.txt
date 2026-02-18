@@ -1,4 +1,4 @@
-*my-template-docs.txt*    For Neovim >= 0.8.0    Last change: 2026 February 17
+*my-template-docs.txt*    For Neovim >= 0.8.0    Last change: 2026 February 18
 
 ==============================================================================
 Table of Contents                         *my-template-docs-table-of-contents*
@@ -39,7 +39,7 @@ Ex: using lazy.nvim
             shadow = true,
             line_numbers = false,
             start_line = 1,
-            border-radius: 5,
+            border_radius = 5,
         })
       end,
     }
