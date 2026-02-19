@@ -62,6 +62,8 @@ struct Config {
     border_radius: u32,
     #[serde(default = "default_outer_background")]
     outer_background: String,
+    #[serde(default = "default_outer_padding")]
+    outer_padding: u32,
 }
 
 fn default_padding() -> u32 {
@@ -99,6 +101,9 @@ fn default_border_radius() -> u32 {
 }
 fn default_outer_background() -> String {
     "#ffffff".to_string()
+}
+fn default_outer_padding() -> u32 {
+    40
 }
 
 #[derive(Debug, Deserialize)]
@@ -259,6 +264,7 @@ fn generate_image(input: Input) -> Result<()> {
 
     // Apply outer drop-shadow when enabled
     let outer_bg = hex_to_rgba(&config.outer_background);
+    let scaled_outer_padding = (config.outer_padding as f32 * render_scale) as u32;
     let img = if config.shadow {
         let shadow_sigma = 20.0 * render_scale; // blur radius scaled for HiDPI
         let shadow_opacity = 0.5;
@@ -271,10 +277,11 @@ fn generate_image(input: Input) -> Result<()> {
             offset_x,
             offset_y,
             outer_bg,
+            scaled_outer_padding,
         )
     } else {
-        // No shadow: add a small margin with the outer background color
-        let margin = (scaled_padding as f32 * 0.5) as u32;
+        // No shadow: add outer padding margin with the outer background color
+        let margin = scaled_outer_padding;
         let (cw, ch) = img.dimensions();
         let out_w = cw + margin * 2;
         let out_h = ch + margin * 2;

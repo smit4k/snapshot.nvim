@@ -30,6 +30,7 @@ end
 ---@field start_line number? Starting line number (default: 1)
 ---@field border_radius number? Corner radius in pixels (default: 5)
 ---@field outer_background string? Background color outside the code card in hex format (default: "#ffffff")
+---@field outer_padding number? Padding between the code card and outer background edge in pixels (default: 40)
 local config = {
   scale = 2,
   padding = 80,
@@ -41,6 +42,7 @@ local config = {
   start_line = 1,
   border_radius = 5,
   outer_background = "#ffffff",
+  outer_padding = 40,
 }
 
 ---@class MyModule

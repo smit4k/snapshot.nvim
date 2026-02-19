@@ -34,6 +34,7 @@ return {
         start_line = 1,
         border_radius = 5,
         outer_background = "#ffffff" -- white by default, use #00000000 for transparent
+        outer_padding = 40,
     })
   end,
 }
