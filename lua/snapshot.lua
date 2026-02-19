@@ -69,7 +69,7 @@ M.setup = function(args)
   end
 end
 
-local VERSION = "v0.1.0"
+local VERSION = "v0.1.1"
 
 M.install = function()
   local os_name = jit.os:lower() -- "linux", "osx", "windows"
