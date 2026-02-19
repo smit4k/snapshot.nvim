@@ -60,6 +60,8 @@ struct Config {
     start_line: usize,
     #[serde(default = "default_border_radius")]
     border_radius: u32,
+    #[serde(default = "default_outer_background")]
+    outer_background: String,
 }
 
 fn default_padding() -> u32 {
@@ -94,6 +96,9 @@ fn default_start_line() -> usize {
 }
 fn default_border_radius() -> u32 {
     5
+}
+fn default_outer_background() -> String {
+    "#ffffff".to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -253,15 +258,62 @@ fn generate_image(input: Input) -> Result<()> {
     }
 
     // Apply outer drop-shadow when enabled
+    let outer_bg = hex_to_rgba(&config.outer_background);
     let img = if config.shadow {
         let shadow_sigma = 20.0 * render_scale; // blur radius scaled for HiDPI
         let shadow_opacity = 0.5;
         let offset_x = 0;
         let offset_y = (8.0 * render_scale) as i32; // slight downward offset
-        apply_outer_shadow(&img, shadow_sigma, shadow_opacity, offset_x, offset_y)
+        apply_outer_shadow(
+            &img,
+            shadow_sigma,
+            shadow_opacity,
+            offset_x,
+            offset_y,
+            outer_bg,
+        )
     } else {
-        img
+        // No shadow: add a small margin with the outer background color
+        let margin = (scaled_padding as f32 * 0.5) as u32;
+        let (cw, ch) = img.dimensions();
+        let out_w = cw + margin * 2;
+        let out_h = ch + margin * 2;
+        let mut output: RgbaImage = ImageBuffer::from_pixel(out_w, out_h, outer_bg);
+        // Composite the card onto the outer background
+        for cy in 0..ch {
+            for cx in 0..cw {
+                let src = img.get_pixel(cx, cy);
+                let sa = src[3] as f32 / 255.0;
+                if sa <= 0.0 {
+                    continue;
+                }
+                let dx = cx + margin;
+                let dy = cy + margin;
+                let dst = output.get_pixel(dx, dy);
+                let da = dst[3] as f32 / 255.0;
+                let out_a = sa + da * (1.0 - sa);
+                if out_a <= 0.0 {
+                    continue;
+                }
+                let r = (src[0] as f32 * sa + dst[0] as f32 * da * (1.0 - sa)) / out_a;
+                let g = (src[1] as f32 * sa + dst[1] as f32 * da * (1.0 - sa)) / out_a;
+                let b = (src[2] as f32 * sa + dst[2] as f32 * da * (1.0 - sa)) / out_a;
+                output.put_pixel(
+                    dx,
+                    dy,
+                    image::Rgba([r as u8, g as u8, b as u8, (out_a * 255.0) as u8]),
+                );
+            }
+        }
+        output
     };
+
+    // Apply rounded corners to the final output image (outer background included)
+    let mut img = img;
+    if config.border_radius > 0 {
+        let scaled_radius = (config.border_radius as f32 * render_scale) as u32;
+        apply_rounded_corners(&mut img, scaled_radius);
+    }
 
     // Expand tilde and environment variables in output path
     let expanded_path = shellexpand::full(&output_path)

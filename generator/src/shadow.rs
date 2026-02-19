@@ -88,6 +88,7 @@ pub fn apply_outer_shadow(
     shadow_opacity: f32,
     offset_x: i32,
     offset_y: i32,
+    outer_bg: Rgba<u8>,
 ) -> RgbaImage {
     let (cw, ch) = card.dimensions();
     let margin = (shadow_blur * 3.0).ceil() as u32; // extra space around card for the blur
@@ -115,16 +116,29 @@ pub fn apply_outer_shadow(
     // Blur the alpha buffer
     gaussian_blur_alpha(&mut alpha_buf, buf_w, buf_h, shadow_blur);
 
-    // Compose: start with transparent canvas, paint blurred shadow, then overlay card
-    let mut output: RgbaImage = ImageBuffer::from_pixel(out_w, out_h, Rgba([0, 0, 0, 0]));
+    // Compose: start with outer background canvas, paint blurred shadow, then overlay card
+    let mut output: RgbaImage = ImageBuffer::from_pixel(out_w, out_h, outer_bg);
 
-    // Paint blurred shadow (black, modulated by blurred alpha * opacity)
+    // Paint blurred shadow (black, modulated by blurred alpha * opacity) onto outer background
     for y in 0..out_h {
         for x in 0..out_w {
             let a = alpha_buf[y as usize * buf_w + x as usize] as f32 / 255.0;
-            let shadow_a = (a * shadow_opacity * 255.0) as u8;
-            if shadow_a > 0 {
-                output.put_pixel(x, y, Rgba([0, 0, 0, shadow_a]));
+            let sa = a * shadow_opacity;
+            if sa > 0.0 {
+                let dst = output.get_pixel(x, y);
+                let da = dst[3] as f32 / 255.0;
+                let out_a = sa + da * (1.0 - sa);
+                if out_a > 0.0 {
+                    // Shadow color is black (0,0,0) with alpha = sa
+                    let r = (dst[0] as f32 * da * (1.0 - sa)) / out_a;
+                    let g = (dst[1] as f32 * da * (1.0 - sa)) / out_a;
+                    let b = (dst[2] as f32 * da * (1.0 - sa)) / out_a;
+                    output.put_pixel(
+                        x,
+                        y,
+                        Rgba([r as u8, g as u8, b as u8, (out_a * 255.0) as u8]),
+                    );
+                }
             }
         }
     }

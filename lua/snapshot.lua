@@ -29,6 +29,7 @@ end
 ---@field line_numbers boolean? Show line numbers (default: false)
 ---@field start_line number? Starting line number (default: 1)
 ---@field border_radius number? Corner radius in pixels (default: 5)
+---@field outer_background string? Background color outside the code card in hex format (default: "#ffffff")
 local config = {
   scale = 2,
   padding = 80,
@@ -39,6 +40,7 @@ local config = {
   line_numbers = false,
   start_line = 1,
   border_radius = 5,
+  outer_background = "#ffffff",
 }
 
 ---@class MyModule
