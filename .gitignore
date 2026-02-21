@@ -15,3 +15,4 @@ test_*.sh
 test_init.vim
 verify_install.lua
 *.png
+generator/test_*
