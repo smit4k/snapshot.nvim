@@ -136,8 +136,21 @@ fn generate_image(input: Input) -> Result<()> {
     };
 
     // Font setup - use a monospace font
-    let font_data = include_bytes!("../fonts/JetBrainsMono-Regular.ttf");
-    let font = FontVec::try_from_vec(font_data.to_vec()).context("Failed to load font")?;
+    let font_path = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_default()
+        .join("JetBrainsMono-Regular.ttf");
+
+    let font_data = if font_path.exists() {
+        std::fs::read(&font_path).context("Failed to read font file")?
+    } else {
+        return Err(anyhow::anyhow!(
+            "Font not found at {}. Please reinstall the plugin to download the font.",
+            font_path.display()
+        ));
+    };
+    let font = FontVec::try_from_vec(font_data).context("Failed to load font")?;
 
     // Apply resolution scale factor for crisp/HiDPI rendering.
     // All rendering dimensions are multiplied by `scale` so text is rasterized

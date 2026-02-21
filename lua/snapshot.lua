@@ -134,6 +134,21 @@ M.install = function()
     vim.fn.system({ "chmod", "+x", dest })
   end
 
+  -- Download font
+  vim.notify("Downloading font...", vim.log.levels.INFO)
+  local font_url = "https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip"
+  local font_zip = dest_dir .. "JetBrainsMono.zip"
+  local font_result = vim.fn.system({ "curl", "-fLo", font_zip, "--create-dirs", font_url })
+  
+  if vim.v.shell_error == 0 then
+    -- Extract the font (we only need Regular weight)
+    vim.fn.system({ "unzip", "-j", "-o", font_zip, "fonts/ttf/JetBrainsMono-Regular.ttf", "-d", dest_dir })
+    -- Cleanup zip
+    vim.fn.delete(font_zip)
+  else
+    vim.notify("Font download failed", vim.log.levels.WARN)
+  end
+
   vim.notify("Snapshot generator installed successfully!", vim.log.levels.INFO)
   return true
 end
