@@ -1,4 +1,4 @@
-*my-template-docs.txt*    For Neovim >= 0.8.0    Last change: 2026 February 21
+*my-template-docs.txt*    For Neovim >= 0.8.0    Last change: 2026 February 22
 
 ==============================================================================
 Table of Contents                         *my-template-docs-table-of-contents*
@@ -50,7 +50,8 @@ Ex: using lazy.nvim
 
 USAGE                                                 *my-template-docs-usage*
 
-Select code in Visual mode and run `:Snapshot`.
+Select code in Visual mode and run `:Snapshot`. To capture an entire file, just
+run `:Snapshot` in Normal mode.
 
 
 CONTRIBUTING                                   *my-template-docs-contributing*
