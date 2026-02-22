@@ -93,7 +93,7 @@ pub fn apply_outer_shadow(
 ) -> RgbaImage {
     let (cw, ch) = card.dimensions();
     let blur_margin = (shadow_blur * 3.0).ceil() as u32; // extra space for the blur
-    let margin = blur_margin.max(outer_padding); // ensure outer padding is respected
+    let margin = blur_margin + outer_padding; // blur space + user-specified outer padding
 
     let out_w = cw + margin * 2;
     let out_h = ch + margin * 2;
