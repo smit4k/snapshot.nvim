@@ -33,16 +33,16 @@ end
 ---@field outer_padding number? Padding between the code card and outer background edge in pixels (default: 40)
 local config = {
   scale = 2,
-  padding = 80,
+  padding = 25,
   line_height = 28,
-  font_size = 20,
+  font_size = 24,
   clipboard = true,
   shadow = true,
   line_numbers = false,
   start_line = 1,
   border_radius = 5,
   outer_background = "#ffffff",
-  outer_padding = 40,
+  outer_padding = 15,
 }
 
 ---@class MyModule

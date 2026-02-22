@@ -67,7 +67,7 @@ struct Config {
 }
 
 fn default_padding() -> u32 {
-    80
+    25
 }
 fn default_scale() -> f32 {
     2.0
@@ -76,7 +76,7 @@ fn default_line_height() -> f32 {
     28.0
 }
 fn default_font_size() -> f32 {
-    20.0
+    24.0
 }
 fn default_background() -> String {
     "#282c34".to_string()
@@ -103,7 +103,7 @@ fn default_outer_background() -> String {
     "#ffffff".to_string()
 }
 fn default_outer_padding() -> u32 {
-    40
+    15
 }
 
 #[derive(Debug, Deserialize)]
