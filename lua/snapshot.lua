@@ -52,12 +52,27 @@ local M = {}
 M.config = config
 
 ---@param args Config?
+local VERSION = "v0.1.3"
+
+--- Read the installed version from the .version file in the release directory.
+--- Returns nil if the file doesn't exist or can't be read.
+local function read_installed_version(plugin_root)
+  local version_file = plugin_root .. "/generator/target/release/.version"
+  local f = io.open(version_file, "r")
+  if not f then
+    return nil
+  end
+  local version = f:read("*l")
+  f:close()
+  return version
+end
+
 -- you can define your setup function here. Usually configurations can be merged, accepting outside params and
 -- you can also put some validation here for those.
 M.setup = function(args)
   M.config = vim.tbl_deep_extend("force", M.config, args or {})
 
-  -- Auto-install binary if not found
+  -- Auto-install or update binary if needed
   local rtp = vim.api.nvim_list_runtime_paths()
   for _, path in ipairs(rtp) do
     if path:match("snapshot%.nvim") or path:match("snapshot$") then
@@ -65,13 +80,17 @@ M.setup = function(args)
       if vim.fn.executable(bin) ~= 1 then
         vim.notify("snapshot.nvim: binary not found, installing...", vim.log.levels.INFO)
         M.install()
+      else
+        local installed_version = read_installed_version(path)
+        if installed_version ~= VERSION then
+          vim.notify("snapshot.nvim: updating binary from " .. (installed_version or "unknown") .. " to " .. VERSION .. "...", vim.log.levels.INFO)
+          M.install()
+        end
       end
       break
     end
   end
 end
-
-local VERSION = "v0.1.3"
 
 M.install = function()
   local os_name = jit.os:lower() -- "linux", "osx", "windows"
@@ -147,6 +166,14 @@ M.install = function()
     vim.fn.delete(font_zip)
   else
     vim.notify("Font download failed", vim.log.levels.WARN)
+  end
+
+  -- Write version file so we can detect outdated binaries on future startups
+  local version_file = dest_dir .. ".version"
+  local vf = io.open(version_file, "w")
+  if vf then
+    vf:write(VERSION)
+    vf:close()
   end
 
   vim.notify("Snapshot generator installed successfully!", vim.log.levels.INFO)
