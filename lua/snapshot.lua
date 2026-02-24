@@ -161,7 +161,29 @@ M.install = function()
 
   if vim.v.shell_error == 0 then
     -- Extract the font (we only need Regular weight)
-    vim.fn.system({ "unzip", "-j", "-o", font_zip, "fonts/ttf/JetBrainsMono-Regular.ttf", "-d", dest_dir })
+    if is_windows then
+      local extract_dir = dest_dir .. "font_extract_tmp"
+      local ps_script = table.concat({
+        "$zip='" .. font_zip:gsub("'", "''") .. "'",
+        "$tmp='" .. extract_dir:gsub("'", "''") .. "'",
+        "$dest='" .. dest_dir:gsub("'", "''") .. "'",
+        "Expand-Archive -Path $zip -DestinationPath $tmp -Force",
+        "$font=Get-ChildItem -Path $tmp -Recurse -Filter 'JetBrainsMono-Regular.ttf' | Select-Object -First 1",
+        "if (-not $font) { Write-Error 'JetBrainsMono-Regular.ttf not found in archive'; exit 1 }",
+        "Copy-Item -Path $font.FullName -Destination (Join-Path $dest 'JetBrainsMono-Regular.ttf') -Force",
+        "Remove-Item -Path $tmp -Recurse -Force",
+      }, "; ")
+
+      vim.fn.system({ "powershell", "-NoProfile", "-Command", ps_script })
+      if vim.v.shell_error ~= 0 then
+        vim.notify("Font extraction failed on Windows", vim.log.levels.WARN)
+      end
+    else
+      vim.fn.system({ "unzip", "-j", "-o", font_zip, "fonts/ttf/JetBrainsMono-Regular.ttf", "-d", dest_dir })
+      if vim.v.shell_error ~= 0 then
+        vim.notify("Font extraction failed", vim.log.levels.WARN)
+      end
+    end
     -- Cleanup zip
     vim.fn.delete(font_zip)
   else
