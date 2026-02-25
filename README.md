@@ -44,7 +44,7 @@ return {
 ## Usage
 
 Select code in Visual mode and run `:Snapshot`.
-To capture an entire file, just run `:Snapshot` in Normal mode.
+To capture an entire buffer, just run `:Snapshot` in Normal mode.
 
 ## Contributing
 
