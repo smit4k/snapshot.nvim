@@ -1,4 +1,4 @@
-*my-template-docs.txt*    For Neovim >= 0.8.0    Last change: 2026 February 25
+*my-template-docs.txt*    For Neovim >= 0.8.0    Last change: 2026 February 26
 
 ==============================================================================
 Table of Contents                         *my-template-docs-table-of-contents*
@@ -14,7 +14,7 @@ snapshot.nvimCreate beautiful screenshots of your code, directly inside Neovim>
 
 FEATURES                                           *my-template-docs-features*
 
-- Code snapshots with syntax highlighting
+- Code screenshots with syntax highlighting
 - Customizable settings (line numbers, padding, shadow, render scale, etc.)
 - Blazingly fast Rust renderer
 
