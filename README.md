@@ -8,7 +8,7 @@
 
 ## Features
 
-- 📸 Code snapshots with syntax highlighting
+- 📸 Code screenshots with syntax highlighting
 - 🎨 Customizable settings (line numbers, padding, shadow, render scale, etc.)
 - ⚡️ Blazingly fast Rust renderer
 
