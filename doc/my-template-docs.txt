@@ -1,4 +1,4 @@
-*my-template-docs.txt*    For Neovim >= 0.8.0    Last change: 2026 February 26
+*my-template-docs.txt*    For Neovim >= 0.8.0    Last change: 2026 February 27
 
 ==============================================================================
 Table of Contents                         *my-template-docs-table-of-contents*
