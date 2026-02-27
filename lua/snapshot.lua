@@ -83,7 +83,10 @@ M.setup = function(args)
       else
         local installed_version = read_installed_version(path)
         if installed_version ~= VERSION then
-          vim.notify("snapshot.nvim: updating binary from " .. (installed_version or "unknown") .. " to " .. VERSION .. "...", vim.log.levels.INFO)
+          vim.notify(
+            "snapshot.nvim: updating binary from " .. (installed_version or "unknown") .. " to " .. VERSION .. "...",
+            vim.log.levels.INFO
+          )
           M.install()
         end
       end
@@ -204,26 +207,6 @@ end
 
 M.hello = function()
   return module.my_first_function(M.config.opt)
-end
-
-M.capture_buffer = function()
-  local buf_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-  return buf_lines or {}
-end
-
-M.capture_visual = function()
-  local start_pos = vim.fn.getpos("'<")
-  local end_pos = vim.fn.getpos("'>")
-  local buf_lines = vim.api.nvim_buf_get_lines(0, start_pos[2] - 1, end_pos[2], false)
-
-  if #buf_lines == 1 then
-    buf_lines[1] = string.sub(buf_lines[1], start_pos[3], end_pos[3])
-  else
-    buf_lines[1] = string.sub(buf_lines[1], start_pos[3])
-    buf_lines[#buf_lines] = string.sub(buf_lines[#buf_lines], 1, end_pos[3])
-  end
-
-  return buf_lines or {}
 end
 
 M.capture_highlights = function(bufnr)
