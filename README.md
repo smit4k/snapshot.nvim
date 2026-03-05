@@ -36,6 +36,7 @@ return {
         --border_radius = 5,
         --outer_background = "#ffffff", -- use #00000000 for transparent
         --outer_padding = 15,
+        --clipboard = true,
     })
   end,
 }
