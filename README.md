@@ -26,16 +26,16 @@ return {
   config = function()
     require("snapshot").setup({
         -- Optional config settings, defaults shown below
-        snapshot_dir = "~/Pictures/snapshots", -- Directory where snapshot images are saved to
-        padding = 25,
-        line_height = 28,
-        font_size = 24,
-        shadow = true,
-        line_numbers = false,
-        start_line = 1,
-        border_radius = 5,
-        outer_background = "#ffffff", -- use #00000000 for transparent
-        outer_padding = 15,
+        snapshot_dir = "~/Pictures/snapshots", -- Reccomended: directory where snapshot images are saved to
+        --padding = 25,
+        --line_height = 28,
+        --font_size = 24,
+        --shadow = true,
+        --line_numbers = false,
+        --start_line = 1,
+        --border_radius = 5,
+        --outer_background = "#ffffff", -- use #00000000 for transparent
+        --outer_padding = 15,
     })
   end,
 }
