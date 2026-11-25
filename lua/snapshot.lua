@@ -12,6 +12,37 @@ local build_command = "cargo build --locked --release --manifest-path "
   .. " --target-dir "
   .. vim.fn.shellescape(target_dir)
 
+local function split_path(path)
+  path = vim.fn.simplify(path)
+  local root = path:match("^/")
+  if is_windows then
+    path = path:gsub("\\", "/"):gsub("^//%?/[Uu][Nn][Cc]/", "//"):gsub("^//%?/(%a:/)", "%1")
+    root = path:match("^%a:/") or path:match("^//[^/]+/[^/]+")
+  end
+  if root then
+    return root:lower(), vim.split(path:sub(#root + 1), "/", { plain = true, trimempty = true })
+  end
+end
+
+local launch_root, launch_parts = split_path(vim.fn.getcwd(-1, -1))
+
+local function relative_file_path(path)
+  local root, parts = split_path(path)
+  if not root or root ~= launch_root then
+    return path
+  end
+
+  local shared = 0
+  for i, directory in ipairs(launch_parts) do
+    local part = parts[i]
+    if not part or (part ~= directory and (not is_windows or part:lower() ~= directory:lower())) then
+      break
+    end
+    shared = i
+  end
+  return string.rep("../", #launch_parts - shared) .. table.concat(parts, "/", shared + 1)
+end
+
 --- Resolve the Normal highlight group to get the editor's background and foreground colors.
 --- Falls back to sensible defaults if the highlight group is not set.
 local function get_editor_colors()
@@ -34,7 +65,7 @@ end
 ---@field clipboard boolean? Enable saving snapshot to clipboard
 ---@field shadow boolean? Enable shadow effect (default: true)
 ---@field traffic_lights boolean? Show macOS-style window controls above the code (default: false)
----@field show_file_path boolean? Show the captured buffer's absolute file path in a header (default: false)
+---@field show_file_path boolean? Show the captured buffer's relative file path in a header (default: false)
 ---@field line_numbers boolean? Show line numbers (default: false)
 ---@field start_line number? Starting line number (default: first captured line)
 ---@field border_radius number? Corner radius in pixels (default: 5)
@@ -357,7 +388,7 @@ M.snapshot = function(opts, range)
   if final_config.show_file_path and vim.bo[bufnr].buftype == "" then
     local file_path = vim.api.nvim_buf_get_name(bufnr)
     if file_path ~= "" then
-      payload.file_path = vim.fn.strtrans(file_path)
+      payload.file_path = vim.fn.strtrans(relative_file_path(file_path))
     end
   end
 

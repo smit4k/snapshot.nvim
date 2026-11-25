@@ -59,7 +59,8 @@ vim.cmd.runtime("plugin/snapshot.lua")
 
 vim.cmd('Snapshot {"show_file_path":true}')
 assert(payload.file_path == nil, "An unnamed buffer has no file path")
-vim.api.nvim_buf_set_name(0, vim.fn.tempname() .. " source.lua")
+local working_dir = vim.fn.getcwd(-1, -1)
+vim.api.nvim_buf_set_name(0, working_dir .. "/lua/../lua/source file.lua")
 
 vim.api.nvim_win_set_cursor(0, { 2, 1 })
 local keys =
@@ -72,7 +73,16 @@ assert(
   vim.inspect(payload)
 )
 assert(payload.config.start_line == 2, vim.inspect(payload))
-assert(payload.file_path == vim.api.nvim_buf_get_name(0), vim.inspect(payload))
+assert(payload.file_path == "lua/source file.lua", vim.inspect(payload))
+
+local parent_dir = vim.fn.fnamemodify(working_dir, ":h")
+vim.cmd.cd(vim.fn.fnameescape(parent_dir))
+vim.cmd('Snapshot {"show_file_path":true}')
+assert(payload.file_path == "lua/source file.lua", vim.inspect(payload))
+vim.api.nvim_buf_set_name(0, parent_dir .. "/outside.lua")
+vim.cmd('Snapshot {"show_file_path":true}')
+assert(payload.file_path == "../outside.lua", vim.inspect(payload))
+vim.cmd.cd(vim.fn.fnameescape(working_dir))
 
 vim.cmd("2,2Snapshot")
 assert(#payload.lines == 1 and payload.lines[1].text == "aéX", vim.inspect(payload))
