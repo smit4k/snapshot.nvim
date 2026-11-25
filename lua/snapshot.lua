@@ -52,8 +52,8 @@ local M = {}
 ---@type Config
 M.config = config
 
----@param args Config?
-local VERSION = "v0.1.3"
+local VERSION = "v0.1.5"
+local FONT_NAME = "JetBrainsMono-Regular.ttf"
 
 --- Read the installed version from the .version file in the release directory.
 --- Returns nil if the file doesn't exist or can't be read.
@@ -73,13 +73,13 @@ end
 M.setup = function(args)
   M.config = vim.tbl_deep_extend("force", M.config, args or {})
 
-  -- Auto-install or update binary if needed
+  -- Auto-install or update the generator and its font if needed
   local rtp = vim.api.nvim_list_runtime_paths()
   for _, path in ipairs(rtp) do
     if path:match("snapshot%.nvim") or path:match("snapshot$") then
-      local bin = path .. "/generator/target/release/" .. generator_bin
-      if vim.fn.executable(bin) ~= 1 then
-        vim.notify("snapshot.nvim: binary not found, installing...", vim.log.levels.INFO)
+      local release_dir = path .. "/generator/target/release/"
+      if vim.fn.executable(release_dir .. generator_bin) ~= 1 or vim.fn.getfsize(release_dir .. FONT_NAME) <= 0 then
+        vim.notify("snapshot.nvim: binary or font not found, installing...", vim.log.levels.INFO)
         M.install()
       else
         local installed_version = read_installed_version(path)
@@ -94,6 +94,11 @@ M.setup = function(args)
       break
     end
   end
+end
+
+local function run_install_command(args)
+  local ok, output = pcall(vim.fn.system, args)
+  return ok and vim.v.shell_error == 0, output
 end
 
 M.install = function()
@@ -130,76 +135,87 @@ M.install = function()
     return false
   end
 
-  local url = "https://github.com/smit4k/snapshot.nvim/releases/download/" .. VERSION .. "/" .. filename
-  local dest_dir = plugin_root .. "/generator/target/release/"
+  local generator_dir = plugin_root .. "/generator/"
+  local target_dir = generator_dir .. "target"
+  local dest_dir = target_dir .. "/release/"
   local dest = dest_dir .. generator_bin
-
-  -- Create destination directory
   vim.fn.mkdir(dest_dir, "p")
 
+  local url = "https://github.com/smit4k/snapshot.nvim/releases/download/" .. VERSION .. "/" .. filename
+  local download = dest .. ".download-" .. vim.fn.getpid()
   vim.notify("Downloading snapshot generator...", vim.log.levels.INFO)
+  local downloaded = run_install_command({ "curl", "-fLo", download, url })
+  if downloaded and not is_windows then
+    downloaded = run_install_command({ "chmod", "+x", download })
+  end
 
-  local result = vim.fn.system({ "curl", "-fLo", dest, "--create-dirs", url })
-
-  if vim.v.shell_error ~= 0 then
+  if not downloaded or vim.fn.rename(download, dest) ~= 0 then
+    vim.fn.delete(download)
     vim.notify("Download failed, falling back to cargo build...", vim.log.levels.WARN)
-
-    -- Fallback to cargo build
-    local cargo_result = vim.fn.system({ "cargo", "build", "--release" }, nil)
-    if vim.v.shell_error ~= 0 then
-      vim.notify("Cargo build failed: " .. cargo_result, vim.log.levels.ERROR)
+    local built, output = run_install_command({
+      "cargo",
+      "build",
+      "--release",
+      "--manifest-path",
+      generator_dir .. "Cargo.toml",
+      "--target-dir",
+      target_dir,
+    })
+    if not built then
+      vim.notify("Cargo build failed: " .. output, vim.log.levels.ERROR)
       return false
     end
   end
 
-  -- Make binary executable on Unix
-  if not is_windows then
-    vim.fn.system({ "chmod", "+x", dest })
+  if vim.fn.executable(dest) ~= 1 then
+    vim.notify("Snapshot generator is missing or not executable: " .. dest, vim.log.levels.ERROR)
+    return false
   end
 
-  -- Download font
-  vim.notify("Downloading font...", vim.log.levels.INFO)
-  local font_url = "https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip"
-  local font_zip = dest_dir .. "JetBrainsMono.zip"
-  local font_result = vim.fn.system({ "curl", "-fLo", font_zip, "--create-dirs", font_url })
+  if vim.fn.getfsize(dest_dir .. FONT_NAME) <= 0 then
+    vim.notify("Downloading font...", vim.log.levels.INFO)
+    local font_url = "https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip"
+    local font_zip = vim.fn.tempname() .. ".zip"
+    local font_downloaded, output = run_install_command({ "curl", "-fLo", font_zip, font_url })
+    if not font_downloaded then
+      vim.fn.delete(font_zip)
+      vim.notify("Font download failed: " .. output, vim.log.levels.ERROR)
+      return false
+    end
 
-  if vim.v.shell_error == 0 then
-    -- Extract the font (we only need Regular weight)
+    local extracted
     if is_windows then
-      local extract_dir = dest_dir .. "font_extract_tmp"
+      local extract_dir = vim.fn.tempname()
       local ps_script = table.concat({
+        "$ErrorActionPreference='Stop'",
         "$zip='" .. font_zip:gsub("'", "''") .. "'",
         "$tmp='" .. extract_dir:gsub("'", "''") .. "'",
         "$dest='" .. dest_dir:gsub("'", "''") .. "'",
-        "Expand-Archive -Path $zip -DestinationPath $tmp -Force",
-        "$font=Get-ChildItem -Path $tmp -Recurse -Filter 'JetBrainsMono-Regular.ttf' | Select-Object -First 1",
-        "if (-not $font) { Write-Error 'JetBrainsMono-Regular.ttf not found in archive'; exit 1 }",
-        "Copy-Item -Path $font.FullName -Destination (Join-Path $dest 'JetBrainsMono-Regular.ttf') -Force",
-        "Remove-Item -Path $tmp -Recurse -Force",
-      }, "; ")
-
-      vim.fn.system({ "powershell", "-NoProfile", "-Command", ps_script })
-      if vim.v.shell_error ~= 0 then
-        vim.notify("Font extraction failed on Windows", vim.log.levels.WARN)
-      end
+        "Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force",
+        "try {",
+        "$font=Get-ChildItem -LiteralPath $tmp -Recurse -Filter '" .. FONT_NAME .. "' | Select-Object -First 1",
+        "if (-not $font) { throw 'Font not found in archive' }",
+        "Copy-Item -LiteralPath $font.FullName -Destination (Join-Path $dest '" .. FONT_NAME .. "') -Force",
+        "} finally { Remove-Item -LiteralPath $tmp -Recurse -Force }",
+      }, "\n")
+      extracted, output = run_install_command({ "powershell", "-NoProfile", "-Command", ps_script })
     else
-      vim.fn.system({ "unzip", "-j", "-o", font_zip, "fonts/ttf/JetBrainsMono-Regular.ttf", "-d", dest_dir })
-      if vim.v.shell_error ~= 0 then
-        vim.notify("Font extraction failed", vim.log.levels.WARN)
-      end
+      extracted, output =
+        run_install_command({ "unzip", "-j", "-o", font_zip, "fonts/ttf/" .. FONT_NAME, "-d", dest_dir })
     end
-    -- Cleanup zip
     vim.fn.delete(font_zip)
-  else
-    vim.notify("Font download failed", vim.log.levels.WARN)
+
+    if not extracted or vim.fn.getfsize(dest_dir .. FONT_NAME) <= 0 then
+      vim.fn.delete(dest_dir .. FONT_NAME)
+      vim.notify("Font extraction failed: " .. output, vim.log.levels.ERROR)
+      return false
+    end
   end
 
-  -- Write version file so we can detect outdated binaries on future startups
-  local version_file = dest_dir .. ".version"
-  local vf = io.open(version_file, "w")
-  if vf then
-    vf:write(VERSION)
-    vf:close()
+  local written, status = pcall(vim.fn.writefile, { VERSION }, dest_dir .. ".version")
+  if not written or status ~= 0 then
+    vim.notify("Failed to write generator version: " .. tostring(status), vim.log.levels.ERROR)
+    return false
   end
 
   vim.notify("Snapshot generator installed successfully!", vim.log.levels.INFO)
