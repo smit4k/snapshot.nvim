@@ -134,3 +134,26 @@ fn reports_malformed_json_on_stderr() {
     assert!(result.stdout.is_empty());
     assert!(String::from_utf8_lossy(&result.stderr).contains("Failed to parse JSON input"));
 }
+
+#[test]
+fn rejects_zero_sized_and_oversized_images_before_saving() {
+    let fixture = Fixture::new();
+    for (name, value, expected) in [
+        ("scale", json!(0.001), "width and height must be positive"),
+        ("scale", json!(1e30), "Scaled font size"),
+        ("outer_padding", json!(u32::MAX), "40000000-pixel limit"),
+        ("padding", json!(u32::MAX), "40000000-pixel limit"),
+    ] {
+        let mut input = json!({
+            "lines": [{ "text": "A", "spans": [] }],
+            "config": { "output_path": "image.png", "clipboard": false },
+        });
+        input["config"][name] = value;
+        let result = fixture.run(&input.to_string());
+
+        assert!(!result.status.success());
+        let error = String::from_utf8_lossy(&result.stderr);
+        assert!(error.contains(expected), "{error}");
+        assert!(!fixture.directory.join("image.png").exists());
+    }
+}

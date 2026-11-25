@@ -136,6 +136,10 @@ fn has_visible_alpha(buf: &[u8]) -> bool {
     buf.iter().any(|&alpha| alpha > 0)
 }
 
+pub fn shadow_blur_margin(sigma: f32) -> u32 {
+    (sigma * 3.0).ceil() as u32
+}
+
 /// Compose a drop-shadow behind `card` and return the final image.
 pub fn apply_outer_shadow(
     card: &RgbaImage,
@@ -147,12 +151,7 @@ pub fn apply_outer_shadow(
     outer_padding: u32,
 ) -> RgbaImage {
     let (cw, ch) = card.dimensions();
-    let blur_margin = if shadow_blur > 0.0 {
-        (shadow_blur * 3.0).ceil() as u32
-    } else {
-        0
-    };
-    let margin = blur_margin + outer_padding;
+    let margin = shadow_blur_margin(shadow_blur) + outer_padding;
     let out_w = cw + margin * 2;
     let out_h = ch + margin * 2;
 

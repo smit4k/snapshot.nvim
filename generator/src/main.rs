@@ -2,7 +2,7 @@ mod shadow;
 mod utils;
 
 use ab_glyph::{Font, FontVec, PxScale};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use arboard::Clipboard;
 use chrono::offset::Local;
 use image::{ImageBuffer, ImageEncoder, ImageFormat, Pixel, Rgba, RgbaImage};
@@ -12,10 +12,13 @@ use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
-use shadow::{apply_outer_shadow, composite_image_onto};
+use shadow::{apply_outer_shadow, composite_image_onto, shadow_blur_margin};
 use utils::{apply_rounded_corners, hex_to_rgba, measure_text_width};
 
 const FALLBACK_RENDER_SCALE: f32 = 2.0;
+const SHADOW_BLUR_SIGMA: f32 = 20.0;
+const MAX_IMAGE_PIXELS: u64 = 40_000_000;
+const MAX_SCALED_FONT_SIZE: f32 = 4096.0;
 const LINE_NUMBER_COLOR_HEX: &str = "#5c6370";
 const TRAFFIC_LIGHT_SPACING: f32 = 20.0;
 const TITLE_BAR_HEIGHT: f32 = 32.0;
@@ -185,15 +188,25 @@ fn load_font() -> Result<FontVec> {
     FontVec::try_from_vec(font_data).context("Failed to load font")
 }
 
-fn build_render_config(config: &Config) -> RenderConfig {
+fn build_render_config(config: &Config) -> Result<RenderConfig> {
+    ensure!(config.scale.is_finite(), "Scale must be finite");
     let render_scale = render_scale(config.scale);
     let scaled_font_size = config.font_size * render_scale;
+    let scaled_line_height = config.line_height * render_scale;
+    ensure!(
+        scaled_font_size > 0.0 && scaled_font_size <= MAX_SCALED_FONT_SIZE,
+        "Scaled font size must be positive and at most {MAX_SCALED_FONT_SIZE} pixels"
+    );
+    ensure!(
+        scaled_line_height.is_finite() && scaled_line_height > 0.0,
+        "Scaled line height must be positive and finite"
+    );
 
-    RenderConfig {
+    Ok(RenderConfig {
         render_scale,
         scale: PxScale::from(scaled_font_size),
         scaled_padding: (config.padding as f32 * render_scale) as u32,
-        scaled_line_height: config.line_height * render_scale,
+        scaled_line_height,
         scaled_outer_padding: (config.outer_padding as f32 * render_scale) as u32,
         scaled_title_bar_height: if config.traffic_lights {
             (TITLE_BAR_HEIGHT * render_scale).ceil() as u32
@@ -204,7 +217,7 @@ fn build_render_config(config: &Config) -> RenderConfig {
         default_fg: hex_to_rgba(&config.foreground),
         outer_bg: hex_to_rgba(&config.outer_background),
         line_number_color: hex_to_rgba(LINE_NUMBER_COLOR_HEX),
-    }
+    })
 }
 
 fn normalize_index(text: &str, index: usize) -> usize {
@@ -292,7 +305,7 @@ fn measure_layout<'a, F, SF>(
     config: &Config,
     render: &RenderConfig,
     scaled_font: &SF,
-) -> PreparedLayout<'a>
+) -> Result<PreparedLayout<'a>>
 where
     F: Font,
     SF: ab_glyph::ScaleFont<F>,
@@ -305,7 +318,8 @@ where
     let (line_number_digits, line_number_width) = if config.line_numbers {
         let last = config
             .start_line
-            .saturating_add(lines.len().saturating_sub(1));
+            .checked_add(lines.len().saturating_sub(1))
+            .context("Starting line number is too large for the capture")?;
         let digits = last.to_string().len().max(4);
         let label = format!("{last:>digits$}  ");
         (digits, measure_text_width(&label, scaled_font))
@@ -318,23 +332,46 @@ where
         .max_by(f64::total_cmp)
         .unwrap_or_else(|| 800.0 * f64::from(render.render_scale));
 
-    let width = (max_content_width + line_number_width).ceil() as u32 + render.scaled_padding * 2;
+    let padding = u64::from(render.scaled_padding) * 2;
+    let content_width = (max_content_width + line_number_width).ceil() as u32;
+    let width = u64::from(content_width) + padding;
     let width = if config.traffic_lights {
-        width.max((TRAFFIC_LIGHT_SPACING * 4.0 * render.render_scale).ceil() as u32)
+        width.max(u64::from(
+            (TRAFFIC_LIGHT_SPACING * 4.0 * render.render_scale).ceil() as u32,
+        ))
     } else {
         width
     };
-    let height = (lines.len() as f32 * render.scaled_line_height) as u32
-        + render.scaled_padding * 2
-        + render.scaled_title_bar_height;
+    let height = u64::from((lines.len() as f32 * render.scaled_line_height) as u32)
+        + padding
+        + u64::from(render.scaled_title_bar_height);
+    ensure!(
+        width > 0 && height > 0,
+        "Snapshot width and height must be positive"
+    );
 
-    PreparedLayout {
+    let blur_margin = if config.shadow {
+        shadow_blur_margin(SHADOW_BLUR_SIGMA * render.render_scale)
+    } else {
+        0
+    };
+    let outer_padding = 2 * (u64::from(blur_margin) + u64::from(render.scaled_outer_padding));
+    let output_width = width + outer_padding;
+    let output_height = height + outer_padding;
+    ensure!(
+        output_width
+            .checked_mul(output_height)
+            .is_some_and(|pixels| pixels <= MAX_IMAGE_PIXELS),
+        "Snapshot dimensions {output_width} x {output_height} exceed the {MAX_IMAGE_PIXELS}-pixel limit; lower the scale or capture a smaller range"
+    );
+
+    Ok(PreparedLayout {
         lines: prepared_lines,
         line_number_width,
         line_number_digits,
-        width,
-        height,
-    }
+        width: width as u32,
+        height: height as u32,
+    })
 }
 
 fn render_card(
@@ -351,7 +388,7 @@ fn render_card(
         let mut x = f64::from(render.scaled_padding);
 
         if config.line_numbers {
-            let number = config.start_line.saturating_add(line_idx);
+            let number = config.start_line + line_idx;
             let digits = layout.line_number_digits;
             let line_num = format!("{number:>digits$}  ");
             draw_text_mut(
@@ -425,7 +462,7 @@ fn apply_card_effects(mut image: RgbaImage, config: &Config, render: &RenderConf
 
 fn finalize_output(card: &RgbaImage, config: &Config, render: &RenderConfig) -> RgbaImage {
     let mut image = if config.shadow {
-        let shadow_sigma = 20.0 * render.render_scale;
+        let shadow_sigma = SHADOW_BLUR_SIGMA * render.render_scale;
         let shadow_opacity = 0.5;
         let offset_x = 0;
         let offset_y = (8.0 * render.render_scale) as i32;
@@ -560,11 +597,11 @@ fn save_image(image: &RgbaImage, config: &Config) -> Result<PathBuf> {
 }
 
 fn generate_image(input: Input) -> Result<()> {
+    let render = build_render_config(&input.config)?;
     let font = load_font()?;
-    let render = build_render_config(&input.config);
     let scaled_font = font.as_scaled(render.scale);
 
-    let layout = measure_layout(&input.lines, &input.config, &render, &scaled_font);
+    let layout = measure_layout(&input.lines, &input.config, &render, &scaled_font)?;
     let card = render_card(&layout, &input.config, &render, &font);
     let card = apply_card_effects(card, &input.config, &render);
     let image = finalize_output(&card, &input.config, &render);
@@ -630,7 +667,7 @@ mod tests {
         let mut config = base_config();
         config.scale = 1.5;
         config.traffic_lights = true;
-        let render = build_render_config(&config);
+        let render = build_render_config(&config).unwrap();
         let card = RgbaImage::from_pixel(120, 90, render.bg_color);
         let card = apply_card_effects(card, &config, &render);
 

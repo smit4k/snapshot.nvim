@@ -50,6 +50,8 @@ To capture an entire buffer, run `:Snapshot` in Normal mode. An explicit line ra
 
 Use `snapshot_dir` to choose the directory for timestamped PNGs. Set `output_path` to an explicit image file, an existing directory, or a new directory marked by a trailing slash. JPEG output flattens transparency onto white.
 
+The generator limits each image to 40 million pixels, including padding and shadow.
+
 ## Contributing
 
 From the repository root, run the Lua tests with `nvim --clean --headless -i NONE -l tests/run.lua` and the generator tests with `cargo test --locked --manifest-path generator/Cargo.toml`.
