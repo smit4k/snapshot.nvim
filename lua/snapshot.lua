@@ -26,6 +26,7 @@ end
 ---@field foreground string? Default text color in hex format (default: from Normal highlight group)
 ---@field clipboard boolean? Enable saving snapshot to clipboard
 ---@field shadow boolean? Enable shadow effect (default: true)
+---@field traffic_lights boolean? Show macOS-style window controls above the code (default: false)
 ---@field line_numbers boolean? Show line numbers (default: false)
 ---@field start_line number? Starting line number (default: 1)
 ---@field border_radius number? Corner radius in pixels (default: 5)
@@ -38,6 +39,7 @@ local config = {
   font_size = 24,
   clipboard = true,
   shadow = true,
+  traffic_lights = false,
   line_numbers = false,
   start_line = 1,
   border_radius = 5,

@@ -6,7 +6,7 @@ use anyhow::{anyhow, Context, Result};
 use arboard::Clipboard;
 use chrono::offset::Local;
 use chrono::DateTime;
-use image::{ImageBuffer, Rgba, RgbaImage};
+use image::{ImageBuffer, Pixel, Rgba, RgbaImage};
 use imageproc::drawing::draw_text_mut;
 use serde::Deserialize;
 use std::io::{self, Read};
@@ -17,6 +17,8 @@ use utils::{apply_rounded_corners, hex_to_rgba, measure_text_width};
 
 const FALLBACK_RENDER_SCALE: f32 = 2.0;
 const LINE_NUMBER_COLOR_HEX: &str = "#5c6370";
+const TRAFFIC_LIGHT_SPACING: f32 = 20.0;
+const TITLE_BAR_HEIGHT: f32 = 32.0;
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
@@ -59,6 +61,8 @@ struct Config {
     clipboard: bool,
     #[serde(default = "default_shadow")]
     shadow: bool,
+    #[serde(default)]
+    traffic_lights: bool,
     #[serde(default = "default_line_numbers")]
     line_numbers: bool,
     #[serde(default = "default_start_line")]
@@ -123,6 +127,7 @@ struct RenderConfig {
     scaled_padding: u32,
     scaled_line_height: f32,
     scaled_outer_padding: u32,
+    scaled_title_bar_height: u32,
     bg_color: Rgba<u8>,
     default_fg: Rgba<u8>,
     outer_bg: Rgba<u8>,
@@ -195,6 +200,11 @@ fn build_render_config(config: &Config) -> RenderConfig {
         scaled_padding: (config.padding as f32 * render_scale) as u32,
         scaled_line_height: config.line_height * render_scale,
         scaled_outer_padding: (config.outer_padding as f32 * render_scale) as u32,
+        scaled_title_bar_height: if config.traffic_lights {
+            (TITLE_BAR_HEIGHT * render_scale).ceil() as u32
+        } else {
+            0
+        },
         bg_color: hex_to_rgba(&config.background),
         default_fg: hex_to_rgba(&config.foreground),
         outer_bg: hex_to_rgba(&config.outer_background),
@@ -331,8 +341,14 @@ where
         .unwrap_or((800.0 * render.render_scale) as u32);
 
     let width = max_content_width + line_number_width + render.scaled_padding * 2;
-    let height =
-        (lines.len() as f32 * render.scaled_line_height) as u32 + render.scaled_padding * 2;
+    let width = if config.traffic_lights {
+        width.max((TRAFFIC_LIGHT_SPACING * 4.0 * render.render_scale).ceil() as u32)
+    } else {
+        width
+    };
+    let height = (lines.len() as f32 * render.scaled_line_height) as u32
+        + render.scaled_padding * 2
+        + render.scaled_title_bar_height;
 
     (prepared_lines, line_number_width, width, height)
 }
@@ -350,7 +366,8 @@ fn render_card(
     let mut image: RgbaImage = ImageBuffer::from_pixel(width, height, render.bg_color);
 
     for (line_idx, (line, prepared)) in lines.iter().zip(prepared_lines).enumerate() {
-        let y = render.scaled_padding as i32 + (line_idx as f32 * render.scaled_line_height) as i32;
+        let y = (render.scaled_padding + render.scaled_title_bar_height) as i32
+            + (line_idx as f32 * render.scaled_line_height) as i32;
         let mut x = render.scaled_padding as f32;
 
         if config.line_numbers {
@@ -385,11 +402,43 @@ fn render_card(
     image
 }
 
-fn apply_card_effects(mut image: RgbaImage, config: &Config, render: &RenderConfig) -> RgbaImage {
-    if config.border_radius > 0 {
-        let scaled_radius = (config.border_radius as f32 * render.render_scale) as u32;
-        apply_rounded_corners(&mut image, scaled_radius);
+fn draw_traffic_lights(image: &mut RgbaImage, scale: f32, border_radius: u32) {
+    let spacing = TRAFFIC_LIGHT_SPACING * scale;
+    let radius = 6.0 * scale;
+    let center_y = TITLE_BAR_HEIGHT * scale / 2.0;
+    let corner_radius = border_radius.min(image.width() / 2).min(image.height() / 2) as f32;
+
+    // Fit the first dot inside the corner arc when the card has a large radius.
+    let inner_radius = (corner_radius - radius - 1.0).max(0.0);
+    let corner_dy = (corner_radius - center_y).max(0.0);
+    let corner_dx = (inner_radius.powi(2) - corner_dy.powi(2)).max(0.0).sqrt();
+    let first_center_x = spacing.max(corner_radius - corner_dx);
+
+    let top = (center_y - radius).floor() as u32;
+    let bottom = (center_y + radius).ceil() as u32;
+    for (index, hex) in ["#ff5f57", "#febc2e", "#28c840"].into_iter().enumerate() {
+        let center_x = first_center_x + index as f32 * spacing;
+        let left = (center_x - radius).floor() as u32;
+        let right = (center_x + radius).ceil() as u32;
+        let mut color = hex_to_rgba(hex);
+
+        for y in top..bottom.min(image.height()) {
+            for x in left..right.min(image.width()) {
+                let distance = (x as f32 + 0.5 - center_x).hypot(y as f32 + 0.5 - center_y);
+                let coverage = (radius + 0.5 - distance).clamp(0.0, 1.0);
+                color[3] = (coverage * 255.0).round() as u8;
+                image.get_pixel_mut(x, y).blend(&color);
+            }
+        }
     }
+}
+
+fn apply_card_effects(mut image: RgbaImage, config: &Config, render: &RenderConfig) -> RgbaImage {
+    let scaled_radius = (config.border_radius as f32 * render.render_scale) as u32;
+    if config.traffic_lights {
+        draw_traffic_lights(&mut image, render.render_scale, scaled_radius);
+    }
+    apply_rounded_corners(&mut image, scaled_radius);
     image
 }
 
@@ -496,7 +545,11 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_index, normalize_span_range, render_scale, resolve_output_path, Config};
+    use super::{
+        apply_card_effects, build_render_config, normalize_index, normalize_span_range,
+        render_scale, resolve_output_path, Config,
+    };
+    use image::{Rgba, RgbaImage};
 
     fn base_config() -> Config {
         Config {
@@ -510,12 +563,35 @@ mod tests {
             foreground: "#abb2bf".to_string(),
             clipboard: false,
             shadow: true,
+            traffic_lights: false,
             line_numbers: false,
             start_line: 1,
             border_radius: 5,
             outer_background: "#ffffff".to_string(),
             outer_padding: 15,
         }
+    }
+
+    #[test]
+    fn traffic_lights_are_off_when_omitted() {
+        let config: Config = serde_json::from_str("{}").unwrap();
+        assert!(!config.traffic_lights);
+    }
+
+    #[test]
+    fn traffic_lights_draw_three_scaled_dots_above_the_code() {
+        let mut config = base_config();
+        config.scale = 1.5;
+        config.traffic_lights = true;
+        let render = build_render_config(&config);
+        let card = RgbaImage::from_pixel(120, 90, render.bg_color);
+        let card = apply_card_effects(card, &config, &render);
+
+        assert_eq!(render.scaled_title_bar_height, 48);
+        assert_eq!(*card.get_pixel(30, 24), Rgba([255, 95, 87, 255]));
+        assert_eq!(*card.get_pixel(60, 24), Rgba([254, 188, 46, 255]));
+        assert_eq!(*card.get_pixel(90, 24), Rgba([40, 200, 64, 255]));
+        assert_eq!(*card.get_pixel(30, 48), render.bg_color);
     }
 
     #[test]

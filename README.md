@@ -31,6 +31,7 @@ return {
         --line_height = 28,
         --font_size = 24,
         --shadow = true,
+        --traffic_lights = false, -- set to true for macOS-style window controls
         --line_numbers = false,
         --start_line = 1,
         --border_radius = 5,
