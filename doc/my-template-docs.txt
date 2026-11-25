@@ -61,7 +61,7 @@ run `:Snapshot` in Normal mode. An explicit line range, such as
 
 Set `show_file_path = true` in setup or run `:Snapshot {"show_file_path":true}`
 to show the file path above the code for a named file buffer. The path is
-relative to Neovim's global working directory when the plugin loads, usually
+relative to Neovim’s global working directory when the plugin loads, usually
 the directory you launched Neovim from. Files on a different Windows drive or
 network share use their absolute path. When `traffic_lights` is enabled, the
 file path appears to the right of the controls in that header. With
