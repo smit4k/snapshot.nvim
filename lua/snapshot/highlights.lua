@@ -9,7 +9,7 @@ end
 
 M.resolve_hl = function(group)
   local ok, hl = pcall(vim.api.nvim_get_hl, 0, { name = group, link = false })
-  if not ok then
+  if not ok or not next(hl) then
     return {}
   end
 
