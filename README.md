@@ -52,4 +52,6 @@ Use `snapshot_dir` to choose the directory for timestamped PNGs. Set `output_pat
 
 ## Contributing
 
+From the repository root, run the Lua tests with `nvim --clean --headless -i NONE -l tests/run.lua` and the generator tests with `cargo test --manifest-path generator/Cargo.toml`.
+
 Contributions are welcome! Please open an [issue](https://github.com/smit4k/snapshot.nvim/issues) to discuss your ideas or problems or submit a [pull request](https://github.com/smit4k/snapshot.nvim/pulls) with your changes.
