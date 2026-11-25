@@ -2,20 +2,23 @@ mod shadow;
 mod utils;
 
 use ab_glyph::{Font, FontVec, PxScale};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use arboard::Clipboard;
 use chrono::offset::Local;
-use chrono::DateTime;
-use image::{ImageBuffer, Pixel, Rgba, RgbaImage};
+use image::{ImageBuffer, ImageEncoder, ImageFormat, Pixel, Rgba, RgbaImage};
 use imageproc::drawing::draw_text_mut;
 use serde::Deserialize;
-use std::io::{self, Read};
-use std::path::PathBuf;
+use std::fs::{self, File};
+use std::io::{self, BufWriter, Read, Write};
+use std::path::{Path, PathBuf};
 
-use shadow::{apply_outer_shadow, composite_image_onto};
+use shadow::{apply_outer_shadow, composite_image_onto, shadow_blur_margin};
 use utils::{apply_rounded_corners, hex_to_rgba, measure_text_width};
 
 const FALLBACK_RENDER_SCALE: f32 = 2.0;
+const SHADOW_BLUR_SIGMA: f32 = 20.0;
+const MAX_IMAGE_PIXELS: u64 = 40_000_000;
+const MAX_SCALED_FONT_SIZE: f32 = 4096.0;
 const LINE_NUMBER_COLOR_HEX: &str = "#5c6370";
 const TRAFFIC_LIGHT_SPACING: f32 = 20.0;
 const TITLE_BAR_HEIGHT: f32 = 32.0;
@@ -134,16 +137,28 @@ struct RenderConfig {
     line_number_color: Rgba<u8>,
 }
 
-struct PreparedSegment {
-    start: usize,
-    end: usize,
-    width: u32,
+struct PreparedSegment<'a> {
+    text: &'a str,
+    width: f64,
     color: Rgba<u8>,
 }
 
-struct PreparedLine {
+struct PreparedLine<'a> {
+    segments: Vec<PreparedSegment<'a>>,
+}
+
+impl PreparedLine<'_> {
+    fn width(&self) -> f64 {
+        self.segments.iter().map(|segment| segment.width).sum()
+    }
+}
+
+struct PreparedLayout<'a> {
+    lines: Vec<PreparedLine<'a>>,
+    line_number_width: f64,
+    line_number_digits: usize,
     width: u32,
-    segments: Vec<PreparedSegment>,
+    height: u32,
 }
 
 fn render_scale(scale: f32) -> f32 {
@@ -151,23 +166,6 @@ fn render_scale(scale: f32) -> f32 {
         scale
     } else {
         FALLBACK_RENDER_SCALE
-    }
-}
-
-fn resolve_output_path(config: &Config) -> String {
-    if let Some(path) = &config.output_path {
-        return path.clone();
-    }
-
-    let now: DateTime<Local> = Local::now();
-    let formatted_time = now.format("%Y-%m-%d_%H-%M-%S").to_string();
-    let filename = format!("snapshot-{formatted_time}.png");
-
-    if let Some(dir) = &config.snapshot_dir {
-        format!("{dir}/{filename}")
-    } else {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        format!("{home}/{filename}")
     }
 }
 
@@ -190,15 +188,25 @@ fn load_font() -> Result<FontVec> {
     FontVec::try_from_vec(font_data).context("Failed to load font")
 }
 
-fn build_render_config(config: &Config) -> RenderConfig {
+fn build_render_config(config: &Config) -> Result<RenderConfig> {
+    ensure!(config.scale.is_finite(), "Scale must be finite");
     let render_scale = render_scale(config.scale);
     let scaled_font_size = config.font_size * render_scale;
+    let scaled_line_height = config.line_height * render_scale;
+    ensure!(
+        scaled_font_size > 0.0 && scaled_font_size <= MAX_SCALED_FONT_SIZE,
+        "Scaled font size must be positive and at most {MAX_SCALED_FONT_SIZE} pixels"
+    );
+    ensure!(
+        scaled_line_height.is_finite() && scaled_line_height > 0.0,
+        "Scaled line height must be positive and finite"
+    );
 
-    RenderConfig {
+    Ok(RenderConfig {
         render_scale,
         scale: PxScale::from(scaled_font_size),
         scaled_padding: (config.padding as f32 * render_scale) as u32,
-        scaled_line_height: config.line_height * render_scale,
+        scaled_line_height,
         scaled_outer_padding: (config.outer_padding as f32 * render_scale) as u32,
         scaled_title_bar_height: if config.traffic_lights {
             (TITLE_BAR_HEIGHT * render_scale).ceil() as u32
@@ -209,7 +217,7 @@ fn build_render_config(config: &Config) -> RenderConfig {
         default_fg: hex_to_rgba(&config.foreground),
         outer_bg: hex_to_rgba(&config.outer_background),
         line_number_color: hex_to_rgba(LINE_NUMBER_COLOR_HEX),
-    }
+    })
 }
 
 fn normalize_index(text: &str, index: usize) -> usize {
@@ -235,31 +243,24 @@ fn normalize_span_range(
     }
 }
 
-fn push_segment<F, SF>(
-    segments: &mut Vec<PreparedSegment>,
-    text: &str,
-    start: usize,
-    end: usize,
+fn push_segment<'a, F, SF>(
+    segments: &mut Vec<PreparedSegment<'a>>,
+    text: &'a str,
     color: Rgba<u8>,
     scaled_font: &SF,
 ) where
     F: Font,
     SF: ab_glyph::ScaleFont<F>,
 {
-    if start >= end {
-        return;
-    }
-
-    let width = measure_text_width(&text[start..end], scaled_font);
-    segments.push(PreparedSegment {
-        start,
-        end,
-        width,
-        color,
-    });
+    let width = measure_text_width(text, scaled_font);
+    segments.push(PreparedSegment { text, width, color });
 }
 
-fn prepare_line<F, SF>(line: &Line, scaled_font: &SF, default_fg: Rgba<u8>) -> PreparedLine
+fn prepare_line<'a, F, SF>(
+    line: &'a Line,
+    scaled_font: &SF,
+    default_fg: Rgba<u8>,
+) -> PreparedLine<'a>
 where
     F: Font,
     SF: ab_glyph::ScaleFont<F>,
@@ -276,54 +277,35 @@ where
         if last_end < start {
             push_segment(
                 &mut segments,
-                &line.text,
-                last_end,
-                start,
+                &line.text[last_end..start],
                 default_fg,
                 scaled_font,
             );
         }
 
         let color = span.fg.as_deref().map(hex_to_rgba).unwrap_or(default_fg);
-        push_segment(&mut segments, &line.text, start, end, color, scaled_font);
+        push_segment(&mut segments, &line.text[start..end], color, scaled_font);
         last_end = end;
     }
 
     if last_end < line.text.len() {
         push_segment(
             &mut segments,
-            &line.text,
-            last_end,
-            line.text.len(),
+            &line.text[last_end..],
             default_fg,
             scaled_font,
         );
     }
 
-    let width = segments.iter().map(|segment| segment.width).sum();
-    PreparedLine { width, segments }
+    PreparedLine { segments }
 }
 
-fn line_number_width<F, SF>(config: &Config, lines: &[Line], scaled_font: &SF) -> u32
-where
-    F: Font,
-    SF: ab_glyph::ScaleFont<F>,
-{
-    if !config.line_numbers {
-        return 0;
-    }
-
-    let max_line_num = config.start_line + lines.len();
-    let line_num = format!("{max_line_num:>4}  ");
-    measure_text_width(&line_num, scaled_font)
-}
-
-fn measure_layout<F, SF>(
-    lines: &[Line],
+fn measure_layout<'a, F, SF>(
+    lines: &'a [Line],
     config: &Config,
     render: &RenderConfig,
     scaled_font: &SF,
-) -> (Vec<PreparedLine>, u32, u32, u32)
+) -> Result<PreparedLayout<'a>>
 where
     F: Font,
     SF: ab_glyph::ScaleFont<F>,
@@ -333,45 +315,82 @@ where
         .map(|line| prepare_line(line, scaled_font, render.default_fg))
         .collect();
 
-    let line_number_width = line_number_width(config, lines, scaled_font);
+    let (line_number_digits, line_number_width) = if config.line_numbers {
+        let last = config
+            .start_line
+            .checked_add(lines.len().saturating_sub(1))
+            .context("Starting line number is too large for the capture")?;
+        let digits = last.to_string().len().max(4);
+        let label = format!("{last:>digits$}  ");
+        (digits, measure_text_width(&label, scaled_font))
+    } else {
+        (0, 0.0)
+    };
     let max_content_width = prepared_lines
         .iter()
-        .map(|line| line.width)
-        .max()
-        .unwrap_or((800.0 * render.render_scale) as u32);
+        .map(PreparedLine::width)
+        .max_by(f64::total_cmp)
+        .unwrap_or_else(|| 800.0 * f64::from(render.render_scale));
 
-    let width = max_content_width + line_number_width + render.scaled_padding * 2;
+    let padding = u64::from(render.scaled_padding) * 2;
+    let content_width = (max_content_width + line_number_width).ceil() as u32;
+    let width = u64::from(content_width) + padding;
     let width = if config.traffic_lights {
-        width.max((TRAFFIC_LIGHT_SPACING * 4.0 * render.render_scale).ceil() as u32)
+        width.max(u64::from(
+            (TRAFFIC_LIGHT_SPACING * 4.0 * render.render_scale).ceil() as u32,
+        ))
     } else {
         width
     };
-    let height = (lines.len() as f32 * render.scaled_line_height) as u32
-        + render.scaled_padding * 2
-        + render.scaled_title_bar_height;
+    let height = u64::from((lines.len() as f32 * render.scaled_line_height) as u32)
+        + padding
+        + u64::from(render.scaled_title_bar_height);
+    ensure!(
+        width > 0 && height > 0,
+        "Snapshot width and height must be positive"
+    );
 
-    (prepared_lines, line_number_width, width, height)
+    let blur_margin = if config.shadow {
+        shadow_blur_margin(SHADOW_BLUR_SIGMA * render.render_scale)
+    } else {
+        0
+    };
+    let outer_padding = 2 * (u64::from(blur_margin) + u64::from(render.scaled_outer_padding));
+    let output_width = width + outer_padding;
+    let output_height = height + outer_padding;
+    ensure!(
+        output_width
+            .checked_mul(output_height)
+            .is_some_and(|pixels| pixels <= MAX_IMAGE_PIXELS),
+        "Snapshot dimensions {output_width} x {output_height} exceed the {MAX_IMAGE_PIXELS}-pixel limit; lower the scale or capture a smaller range"
+    );
+
+    Ok(PreparedLayout {
+        lines: prepared_lines,
+        line_number_width,
+        line_number_digits,
+        width: width as u32,
+        height: height as u32,
+    })
 }
 
 fn render_card(
-    lines: &[Line],
-    prepared_lines: &[PreparedLine],
+    layout: &PreparedLayout<'_>,
     config: &Config,
     render: &RenderConfig,
     font: &FontVec,
-    line_number_width: u32,
-    width: u32,
-    height: u32,
 ) -> RgbaImage {
-    let mut image: RgbaImage = ImageBuffer::from_pixel(width, height, render.bg_color);
+    let mut image = ImageBuffer::from_pixel(layout.width, layout.height, render.bg_color);
 
-    for (line_idx, (line, prepared)) in lines.iter().zip(prepared_lines).enumerate() {
+    for (line_idx, line) in layout.lines.iter().enumerate() {
         let y = (render.scaled_padding + render.scaled_title_bar_height) as i32
             + (line_idx as f32 * render.scaled_line_height) as i32;
-        let mut x = render.scaled_padding as f32;
+        let mut x = f64::from(render.scaled_padding);
 
         if config.line_numbers {
-            let line_num = format!("{:>4}  ", config.start_line + line_idx);
+            let number = config.start_line + line_idx;
+            let digits = layout.line_number_digits;
+            let line_num = format!("{number:>digits$}  ");
             draw_text_mut(
                 &mut image,
                 render.line_number_color,
@@ -381,21 +400,20 @@ fn render_card(
                 font,
                 &line_num,
             );
-            x += line_number_width as f32;
+            x += layout.line_number_width;
         }
 
-        for segment in &prepared.segments {
-            let text = &line.text[segment.start..segment.end];
+        for segment in &line.segments {
             draw_text_mut(
                 &mut image,
                 segment.color,
-                x as i32,
+                x.round() as i32,
                 y,
                 render.scale,
                 font,
-                text,
+                segment.text,
             );
-            x += segment.width as f32;
+            x += segment.width;
         }
     }
 
@@ -444,7 +462,7 @@ fn apply_card_effects(mut image: RgbaImage, config: &Config, render: &RenderConf
 
 fn finalize_output(card: &RgbaImage, config: &Config, render: &RenderConfig) -> RgbaImage {
     let mut image = if config.shadow {
-        let shadow_sigma = 20.0 * render.render_scale;
+        let shadow_sigma = SHADOW_BLUR_SIGMA * render.render_scale;
         let shadow_opacity = 0.5;
         let offset_x = 0;
         let offset_y = (8.0 * render.render_scale) as i32;
@@ -488,48 +506,114 @@ fn copy_to_clipboard(image: &RgbaImage) -> Result<()> {
         .map_err(|error| anyhow!("Failed to copy to clipboard: {error}"))
 }
 
-fn save_image(image: &RgbaImage, output_path: &str) -> Result<String> {
-    let expanded_path = shellexpand::full(output_path)
-        .context("Failed to expand output path")?
-        .to_string();
+fn expand_path(path: &str) -> Result<PathBuf> {
+    Ok(PathBuf::from(
+        shellexpand::full(path)
+            .with_context(|| format!("Failed to expand output path {path:?}"))?
+            .as_ref(),
+    ))
+}
 
-    if let Some(parent) = std::path::Path::new(&expanded_path).parent() {
-        std::fs::create_dir_all(parent).context("Failed to create parent directories")?;
+fn save_generated_png(image: &RgbaImage, directory: &Path, timestamp: &str) -> Result<PathBuf> {
+    fs::create_dir_all(directory)
+        .with_context(|| format!("Failed to create output directory {}", directory.display()))?;
+
+    let mut suffix = 0;
+    loop {
+        let name = if suffix == 0 {
+            format!("snapshot-{timestamp}.png")
+        } else {
+            format!("snapshot-{timestamp}-{suffix}.png")
+        };
+        let path = directory.join(name);
+        let file = match File::create_new(&path) {
+            Ok(file) => file,
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                suffix += 1;
+                continue;
+            }
+            Err(err) => {
+                return Err(err).with_context(|| format!("Failed to create {}", path.display()));
+            }
+        };
+
+        let mut writer = BufWriter::new(file);
+        let result = image::codecs::png::PngEncoder::new(&mut writer)
+            .write_image(
+                image.as_raw(),
+                image.width(),
+                image.height(),
+                image::ExtendedColorType::Rgba8,
+            )
+            .map_err(anyhow::Error::from)
+            .and_then(|()| writer.flush().map_err(anyhow::Error::from));
+        drop(writer);
+
+        if let Err(err) = result {
+            let _ = fs::remove_file(&path);
+            return Err(err).with_context(|| format!("Failed to save image to {}", path.display()));
+        }
+        return Ok(path);
     }
+}
 
-    image.save(&expanded_path).context("Failed to save image")?;
-    Ok(expanded_path)
+fn save_image(image: &RgbaImage, config: &Config) -> Result<PathBuf> {
+    let directory = if let Some(output_path) = &config.output_path {
+        let path = expand_path(output_path)?;
+        if path.is_dir() || output_path.ends_with(std::path::is_separator) {
+            path
+        } else {
+            let format = ImageFormat::from_path(&path)
+                .with_context(|| format!("Unsupported image path {}", path.display()))?;
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!("Failed to create output directory {}", parent.display())
+                })?;
+            }
+
+            let saved = if format == ImageFormat::Jpeg {
+                let flattened = ImageBuffer::from_fn(image.width(), image.height(), |x, y| {
+                    let mut pixel = Rgba([255; 4]);
+                    pixel.blend(image.get_pixel(x, y));
+                    pixel.to_rgb()
+                });
+                flattened.save_with_format(&path, format)
+            } else {
+                image.save_with_format(&path, format)
+            };
+            saved.with_context(|| format!("Failed to save image to {}", path.display()))?;
+            return Ok(path);
+        }
+    } else if let Some(directory) = &config.snapshot_dir {
+        expand_path(directory)?
+    } else {
+        std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map_or_else(|| PathBuf::from("."), PathBuf::from)
+    };
+
+    let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    save_generated_png(image, &directory, &timestamp)
 }
 
 fn generate_image(input: Input) -> Result<()> {
-    let output_path = resolve_output_path(&input.config);
+    let render = build_render_config(&input.config)?;
     let font = load_font()?;
-    let render = build_render_config(&input.config);
     let scaled_font = font.as_scaled(render.scale);
 
-    let (prepared_lines, line_number_width, width, height) =
-        measure_layout(&input.lines, &input.config, &render, &scaled_font);
-    let card = render_card(
-        &input.lines,
-        &prepared_lines,
-        &input.config,
-        &render,
-        &font,
-        line_number_width,
-        width,
-        height,
-    );
+    let layout = measure_layout(&input.lines, &input.config, &render, &scaled_font)?;
+    let card = render_card(&layout, &input.config, &render, &font);
     let card = apply_card_effects(card, &input.config, &render);
     let image = finalize_output(&card, &input.config, &render);
 
+    let saved_path = save_image(&image, &input.config)?;
     if input.config.clipboard {
         copy_to_clipboard(&image).unwrap_or_else(|error| {
             eprintln!("Warning: {error}");
         });
     }
 
-    let saved_path = save_image(&image, &output_path)?;
-    println!("{saved_path}");
+    println!("{}", saved_path.display());
     Ok(())
 }
 
@@ -547,7 +631,7 @@ fn main() -> Result<()> {
 mod tests {
     use super::{
         apply_card_effects, build_render_config, normalize_index, normalize_span_range,
-        render_scale, resolve_output_path, Config,
+        render_scale, save_generated_png, Config, PreparedLine, PreparedSegment,
     };
     use image::{Rgba, RgbaImage};
 
@@ -583,7 +667,7 @@ mod tests {
         let mut config = base_config();
         config.scale = 1.5;
         config.traffic_lights = true;
-        let render = build_render_config(&config);
+        let render = build_render_config(&config).unwrap();
         let card = RgbaImage::from_pixel(120, 90, render.bg_color);
         let card = apply_card_effects(card, &config, &render);
 
@@ -595,11 +679,21 @@ mod tests {
     }
 
     #[test]
-    fn output_path_prefers_explicit_value() {
-        let mut config = base_config();
-        config.output_path = Some("/tmp/out.png".to_string());
+    fn generated_paths_preserve_existing_images() {
+        let directory = std::env::temp_dir().join(format!(
+            "snapshot-generator-collision-{}",
+            std::process::id()
+        ));
+        let image = RgbaImage::from_pixel(2, 2, Rgba([1, 2, 3, 255]));
+        let first = save_generated_png(&image, &directory, "same-second").unwrap();
+        let second_image = RgbaImage::from_pixel(2, 2, Rgba([3, 2, 1, 255]));
+        let second = save_generated_png(&second_image, &directory, "same-second").unwrap();
+        let first_pixel = image::open(&first).unwrap().to_rgba8().get_pixel(0, 0).0;
+        std::fs::remove_dir_all(directory).unwrap();
 
-        assert_eq!(resolve_output_path(&config), "/tmp/out.png");
+        assert_eq!(first.file_name().unwrap(), "snapshot-same-second.png");
+        assert_eq!(second.file_name().unwrap(), "snapshot-same-second-1.png");
+        assert_eq!(first_pixel, [1, 2, 3, 255]);
     }
 
     #[test]
@@ -607,6 +701,25 @@ mod tests {
         assert_eq!(render_scale(0.0), 2.0);
         assert_eq!(render_scale(-1.0), 2.0);
         assert_eq!(render_scale(1.5), 1.5);
+    }
+
+    #[test]
+    fn prepared_line_keeps_fractional_segment_advances() {
+        let line = PreparedLine {
+            segments: vec![
+                PreparedSegment {
+                    text: "x",
+                    width: 7.25,
+                    color: Rgba([0, 0, 0, 255]),
+                },
+                PreparedSegment {
+                    text: "y",
+                    width: 7.25,
+                    color: Rgba([255, 0, 0, 255]),
+                },
+            ],
+        };
+        assert_eq!(line.width().ceil(), 15.0);
     }
 
     #[test]

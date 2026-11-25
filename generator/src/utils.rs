@@ -3,49 +3,40 @@ use image::{Rgba, RgbaImage};
 
 const HEX_FALLBACK: Rgba<u8> = Rgba([255, 255, 255, 255]);
 
-fn parse_hex_component(component: &str) -> Option<u8> {
-    if component.len() != 2 {
-        return None;
-    }
-
-    u8::from_str_radix(component, 16).ok()
+fn parse_hex_component(component: &[u8]) -> Option<u8> {
+    let high = char::from(component[0]).to_digit(16)?;
+    let low = char::from(component[1]).to_digit(16)?;
+    Some((high * 16 + low) as u8)
 }
 
 pub fn try_hex_to_rgba(hex: &str) -> Option<Rgba<u8>> {
-    let hex = hex.trim().trim_start_matches('#');
+    let hex = hex.trim().trim_start_matches('#').as_bytes();
 
-    match hex.len() {
-        6 => Some(Rgba([
-            parse_hex_component(&hex[0..2])?,
-            parse_hex_component(&hex[2..4])?,
-            parse_hex_component(&hex[4..6])?,
-            255,
-        ])),
-        8 => Some(Rgba([
-            parse_hex_component(&hex[0..2])?,
-            parse_hex_component(&hex[2..4])?,
-            parse_hex_component(&hex[4..6])?,
-            parse_hex_component(&hex[6..8])?,
-        ])),
-        _ => None,
-    }
+    let alpha = match hex.len() {
+        6 => 255,
+        8 => parse_hex_component(&hex[6..8])?,
+        _ => return None,
+    };
+    Some(Rgba([
+        parse_hex_component(&hex[0..2])?,
+        parse_hex_component(&hex[2..4])?,
+        parse_hex_component(&hex[4..6])?,
+        alpha,
+    ]))
 }
 
 pub fn hex_to_rgba(hex: &str) -> Rgba<u8> {
     try_hex_to_rgba(hex).unwrap_or(HEX_FALLBACK)
 }
 
-pub fn measure_text_width<F, SF>(text: &str, font: &SF) -> u32
+pub fn measure_text_width<F, SF>(text: &str, font: &SF) -> f64
 where
     F: Font,
     SF: ScaleFont<F>,
 {
-    let width = text.chars().fold(0.0, |acc, c| {
-        let glyph_id = font.glyph_id(c);
-        acc + font.h_advance(glyph_id)
-    });
-
-    width.ceil() as u32
+    text.chars()
+        .map(|c| f64::from(font.h_advance(font.glyph_id(c))))
+        .sum()
 }
 
 pub fn apply_rounded_corners(img: &mut RgbaImage, radius: u32) {
@@ -116,6 +107,8 @@ mod tests {
     fn invalid_hex_falls_back_to_white() {
         assert_eq!(try_hex_to_rgba("#12"), None);
         assert_eq!(try_hex_to_rgba("#zzzzzz"), None);
+        assert_eq!(try_hex_to_rgba("aébbb"), None);
+        assert_eq!(try_hex_to_rgba("00000é1"), None);
         assert_eq!(hex_to_rgba("#12"), Rgba([255, 255, 255, 255]));
     }
 

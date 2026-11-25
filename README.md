@@ -33,7 +33,7 @@ return {
         --shadow = true,
         --traffic_lights = false, -- set to true for macOS-style window controls
         --line_numbers = false,
-        --start_line = 1,
+        --start_line = 1, -- override the first captured line number
         --border_radius = 5,
         --outer_background = "#ffffff", -- use #00000000 for transparent
         --outer_padding = 15,
@@ -46,8 +46,14 @@ return {
 ## Usage
 
 Select code in Visual mode and run `:Snapshot`.
-To capture an entire buffer, just run `:Snapshot` in Normal mode.
+To capture an entire buffer, run `:Snapshot` in Normal mode. An explicit line range, such as `:5,10Snapshot`, captures those full lines.
+
+Use `snapshot_dir` to choose the directory for timestamped PNGs. Set `output_path` to an explicit image file, an existing directory, or a new directory marked by a trailing slash. JPEG output flattens transparency onto white.
+
+The generator limits each image to 40 million pixels, including padding and shadow.
 
 ## Contributing
+
+From the repository root, run the Lua tests with `nvim --clean --headless -i NONE -l tests/run.lua` and the generator tests with `cargo test --locked --manifest-path generator/Cargo.toml`.
 
 Contributions are welcome! Please open an [issue](https://github.com/smit4k/snapshot.nvim/issues) to discuss your ideas or problems or submit a [pull request](https://github.com/smit4k/snapshot.nvim/pulls) with your changes.

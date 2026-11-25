@@ -1,91 +1,124 @@
 local hl = require("snapshot.highlights")
 local M = {}
 
-local function get_treesitter_highlights(bufnr, row, line)
-  local highlights = {}
-  local len = #line
+local function collect_treesitter(highlighter, bufnr, lines, start_row, resolve_colors)
+  local rows = {}
+  local stop_row = start_row + #lines
+  highlighter.tree:parse({ start_row, stop_row })
 
-  if len == 0 then
-    return highlights
-  end
-
-  local ok, parser = pcall(vim.treesitter.get_parser, bufnr)
-  if not ok or not parser then
-    return highlights
-  end
-
-  for col = 0, len - 1 do
-    local captures = vim.treesitter.get_captures_at_pos(bufnr, row, col)
-    if #captures > 0 then
-      -- Use the last (highest priority) capture
-      local capture = captures[#captures]
-      local hl_group = "@" .. capture.capture
-      table.insert(highlights, {
-        col = col,
-        hl_group = hl_group,
-      })
+  highlighter.tree:for_each_tree(function(tstree, tree)
+    local root = tstree:root()
+    local first_row, _, last_row = root:range()
+    if first_row >= stop_row or last_row < start_row then
+      return
     end
-  end
 
-  return highlights
+    local lang = tree:lang()
+    local query = highlighter:get_query(lang):query()
+    if not query then
+      return
+    end
+
+    for id, node, metadata in query:iter_captures(root, bufnr, start_row, stop_row) do
+      local name = query.captures[id]
+      if name:sub(1, 1) ~= "_" then
+        local colors = resolve_colors("@" .. name .. "." .. lang)
+        if colors then
+          local capture_metadata = metadata[id]
+          local priority = tonumber(metadata.priority or capture_metadata and capture_metadata.priority) or 100
+          local mark = { colors = colors, priority = priority }
+          local from_row, from_col, _, to_row, to_col = unpack(vim.treesitter.get_range(node, bufnr, capture_metadata))
+
+          for row = math.max(start_row, from_row), math.min(stop_row - 1, to_row) do
+            local index = row - start_row + 1
+            local line = lines[index]
+            local first = row == from_row and math.max(0, from_col) or 0
+            local last = row == to_row and math.min(#line, to_col) or #line
+            local columns = rows[index] or {}
+            rows[index] = columns
+            for col = first + 1, last do
+              local previous = columns[col]
+              if not previous or priority >= previous.priority then
+                columns[col] = mark
+              end
+            end
+          end
+        end
+      end
+    end
+  end)
+
+  return rows
 end
 
-local function merge_highlights_to_spans(highlights, line)
+local function collect_syntax(bufnr, lines, start_row, resolve_colors)
+  local rows = {}
+  local groups = { [0] = false }
+  vim.api.nvim_buf_call(bufnr, function()
+    for i, line in ipairs(lines) do
+      local columns = {}
+      for col = 1, #line do
+        local id = vim.fn.synID(start_row + i, col, 1)
+        if groups[id] == nil then
+          local colors = resolve_colors(vim.fn.synIDattr(id, "name"))
+          groups[id] = colors and { colors = colors } or false
+        end
+        columns[col] = groups[id] or nil
+      end
+      rows[i] = columns
+    end
+  end)
+  return rows
+end
+
+local function build_spans(columns, length)
   local spans = {}
-  if #highlights == 0 then
+  if not columns then
     return spans
   end
 
-  local current = highlights[1]
-  local start_col = current.col
-
-  for i = 2, #highlights do
-    local h = highlights[i]
-    if h.hl_group ~= current.hl_group or h.col ~= highlights[i - 1].col + 1 then
-      local colors = hl.resolve_hl(current.hl_group)
-      table.insert(spans, {
-        start = start_col,
-        ["end"] = highlights[i - 1].col + 1,
-        fg = colors.fg,
-        bg = colors.bg,
-        bold = colors.bold,
-        italic = colors.italic,
-        underline = colors.underline,
-        undercurl = colors.undercurl,
-      })
-      current = h
-      start_col = h.col
+  local start_col, colors
+  for col = 1, length + 1 do
+    local mark = columns[col]
+    local next_colors = mark and mark.colors
+    if next_colors ~= colors then
+      if colors then
+        spans[#spans + 1] = vim.tbl_extend("error", colors, { start = start_col - 1, ["end"] = col - 1 })
+      end
+      start_col, colors = col, next_colors
     end
   end
-
-  -- Add final span
-  local colors = hl.resolve_hl(current.hl_group)
-  table.insert(spans, {
-    start = start_col,
-    ["end"] = highlights[#highlights].col + 1,
-    fg = colors.fg,
-    bg = colors.bg,
-    bold = colors.bold,
-    italic = colors.italic,
-    underline = colors.underline,
-    undercurl = colors.undercurl,
-  })
-
   return spans
 end
 
 M.build_snapshot_json = function(bufnr, lines, start_row)
   local json = {}
-  start_row = start_row or 0
-
-  for i, line in ipairs(lines) do
-    local row = start_row + i - 1
-    local highlights = get_treesitter_highlights(bufnr, row, line)
-    local spans = merge_highlights_to_spans(highlights, line)
-
-    json[i] = { text = line, spans = spans }
+  if #lines == 0 then
+    return json
   end
 
+  bufnr = bufnr == 0 and vim.api.nvim_get_current_buf() or bufnr
+  start_row = start_row or 0
+  local resolved = {}
+  local function resolve_colors(group)
+    if resolved[group] == nil then
+      local colors = hl.resolve_hl(group)
+      resolved[group] = next(colors) and colors or false
+    end
+    return resolved[group] or nil
+  end
+
+  local highlighter = vim.treesitter.highlighter.active[bufnr]
+  local rows
+  if highlighter then
+    rows = collect_treesitter(highlighter, bufnr, lines, start_row, resolve_colors)
+  else
+    rows = collect_syntax(bufnr, lines, start_row, resolve_colors)
+  end
+
+  for i, line in ipairs(lines) do
+    json[i] = { text = line, spans = build_spans(rows[i], #line) }
+  end
   return json
 end
 

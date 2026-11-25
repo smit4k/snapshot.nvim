@@ -4,58 +4,41 @@ if not ok then
   return
 end
 
--- Main snapshot command - works in both normal and visual mode
+-- Ex resolves both Visual marks and numeric ranges to line numbers before invoking the command.
+local visual_command
+vim.api.nvim_create_autocmd("CmdlineLeave", {
+  group = vim.api.nvim_create_augroup("SnapshotCommand", { clear = true }),
+  pattern = ":",
+  callback = function()
+    local command = vim.fn.getcmdline()
+    if not vim.v.event.abort and command:match("^%s*'<,'>%s*Snapshot%f[%W]") then
+      visual_command = command
+      vim.schedule(function()
+        if visual_command == command then
+          visual_command = nil
+        end
+      end)
+    end
+  end,
+})
+
 vim.api.nvim_create_user_command("Snapshot", function(opts)
+  local visual = visual_command ~= nil
+  visual_command = nil
   local config_override = {}
   -- Check if args exists and is not empty or whitespace
   if opts.args and opts.args:match("%S") then
     local decode_ok, decoded = pcall(vim.fn.json_decode, opts.args)
-    if decode_ok then
+    if decode_ok and opts.args:match("^%s*{") then
       config_override = decoded
     else
       vim.notify("Invalid JSON arguments: " .. opts.args, vim.log.levels.ERROR)
       return
     end
   end
-  snapshot.snapshot(config_override)
+  local range = opts.range > 0 and { line1 = math.max(opts.line1, 1), line2 = math.max(opts.line2, 1), visual = visual }
+    or nil
+  snapshot.snapshot(config_override, range)
 end, { range = true, nargs = "?" })
 
--- Debug command to check paths and installation
-vim.api.nvim_create_user_command("SnapshotDebug", function(opts)
-  local is_windows = vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1
-  local bin_name = is_windows and "snapshot-generator.exe" or "snapshot-generator"
-
-  print("=== Snapshot Debug Info ===")
-  print("Platform: " .. (is_windows and "Windows" or "Unix"))
-  print("opts.args type: " .. type(opts.args))
-  print("opts.args value: " .. vim.inspect(opts.args))
-  print("")
-
-  -- Check runtime paths
-  print("Checking runtime paths for snapshot.nvim...")
-  local rtp = vim.api.nvim_list_runtime_paths()
-  local found_plugin = false
-  for _, path in ipairs(rtp) do
-    if path:match("snapshot%.nvim") or path:match("snapshot$") then
-      found_plugin = true
-      print("✓ Plugin path: " .. path)
-
-      local gen_path = path .. "/generator/target/release/" .. bin_name
-      if vim.fn.executable(gen_path) == 1 then
-        print("✓ Generator found: " .. gen_path)
-        local size = vim.fn.getfsize(gen_path)
-        print("  Size: " .. string.format("%.1f MB", size / 1024 / 1024))
-      else
-        print("✗ Generator NOT found: " .. gen_path)
-        print("  Run: cd " .. path .. "/generator && cargo build --release")
-      end
-    end
-  end
-
-  if not found_plugin then
-    print("✗ snapshot.nvim not found in runtimepath")
-  end
-
-  print("")
-  print("Module location: " .. debug.getinfo(1, "S").source)
-end, { nargs = "?" })
+vim.api.nvim_create_user_command("SnapshotDebug", snapshot.debug, { nargs = "?" })

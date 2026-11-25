@@ -1,9 +1,16 @@
--- main module file
-local module = require("snapshot.module")
 local highlights = require("snapshot.highlights")
 
 local is_windows = vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1
 local generator_bin = is_windows and "snapshot-generator.exe" or "snapshot-generator"
+local plugin_root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
+local target_dir = plugin_root .. "/generator/target"
+local release_dir = target_dir .. "/release/"
+local generator_path = release_dir .. generator_bin
+local generator_manifest = plugin_root .. "/generator/Cargo.toml"
+local build_command = "cargo build --locked --release --manifest-path "
+  .. vim.fn.shellescape(generator_manifest)
+  .. " --target-dir "
+  .. vim.fn.shellescape(target_dir)
 
 --- Resolve the Normal highlight group to get the editor's background and foreground colors.
 --- Falls back to sensible defaults if the highlight group is not set.
@@ -17,21 +24,21 @@ end
 
 ---@class Config
 ---@field snapshot_dir string? Directory to save snapshots (defaults to $HOME)
----@field output_path string? Path to save the snapshot (defaults to snapshot_dir/snapshot-{timestamp}.png)
+---@field output_path string? Image file path or a directory for a generated PNG
 ---@field scale number? Resolution scale factor for HiDPI/Retina rendering (default: 2)
----@field padding number? Padding around the code (default: 80)
+---@field padding number? Padding around the code (default: 25)
 ---@field line_height number? Height of each line in pixels (default: 28)
----@field font_size number? Font size in pixels (default: 20)
+---@field font_size number? Font size in pixels (default: 24)
 ---@field background string? Background color in hex format (default: from Normal highlight group)
 ---@field foreground string? Default text color in hex format (default: from Normal highlight group)
 ---@field clipboard boolean? Enable saving snapshot to clipboard
 ---@field shadow boolean? Enable shadow effect (default: true)
 ---@field traffic_lights boolean? Show macOS-style window controls above the code (default: false)
 ---@field line_numbers boolean? Show line numbers (default: false)
----@field start_line number? Starting line number (default: 1)
+---@field start_line number? Starting line number (default: first captured line)
 ---@field border_radius number? Corner radius in pixels (default: 5)
 ---@field outer_background string? Background color outside the code card in hex format (default: "#ffffff")
----@field outer_padding number? Padding between the code card and outer background edge in pixels (default: 40)
+---@field outer_padding number? Padding between the code card and outer background edge in pixels (default: 15)
 local config = {
   scale = 2,
   padding = 25,
@@ -41,25 +48,23 @@ local config = {
   shadow = true,
   traffic_lights = false,
   line_numbers = false,
-  start_line = 1,
   border_radius = 5,
   outer_background = "#ffffff",
   outer_padding = 15,
 }
 
----@class MyModule
 local M = {}
 
 ---@type Config
 M.config = config
 
----@param args Config?
-local VERSION = "v0.1.3"
+local VERSION = "v0.1.5"
+local FONT_NAME = "JetBrainsMono-Regular.ttf"
 
 --- Read the installed version from the .version file in the release directory.
 --- Returns nil if the file doesn't exist or can't be read.
-local function read_installed_version(plugin_root)
-  local version_file = plugin_root .. "/generator/target/release/.version"
+local function read_installed_version()
+  local version_file = release_dir .. ".version"
   local f = io.open(version_file, "r")
   if not f then
     return nil
@@ -69,32 +74,29 @@ local function read_installed_version(plugin_root)
   return version
 end
 
--- you can define your setup function here. Usually configurations can be merged, accepting outside params and
--- you can also put some validation here for those.
+---@param args Config?
 M.setup = function(args)
   M.config = vim.tbl_deep_extend("force", M.config, args or {})
 
-  -- Auto-install or update binary if needed
-  local rtp = vim.api.nvim_list_runtime_paths()
-  for _, path in ipairs(rtp) do
-    if path:match("snapshot%.nvim") or path:match("snapshot$") then
-      local bin = path .. "/generator/target/release/" .. generator_bin
-      if vim.fn.executable(bin) ~= 1 then
-        vim.notify("snapshot.nvim: binary not found, installing...", vim.log.levels.INFO)
-        M.install()
-      else
-        local installed_version = read_installed_version(path)
-        if installed_version ~= VERSION then
-          vim.notify(
-            "snapshot.nvim: updating binary from " .. (installed_version or "unknown") .. " to " .. VERSION .. "...",
-            vim.log.levels.INFO
-          )
-          M.install()
-        end
-      end
-      break
-    end
+  if vim.fn.executable(generator_path) ~= 1 or vim.fn.getfsize(release_dir .. FONT_NAME) <= 0 then
+    vim.notify("snapshot.nvim: binary or font not found, installing...", vim.log.levels.INFO)
+    M.install()
+    return
   end
+
+  local installed_version = read_installed_version()
+  if installed_version ~= VERSION then
+    vim.notify(
+      "snapshot.nvim: updating binary from " .. (installed_version or "unknown") .. " to " .. VERSION .. "...",
+      vim.log.levels.INFO
+    )
+    M.install()
+  end
+end
+
+local function run_install_command(args)
+  local ok, output = pcall(vim.fn.system, args)
+  return ok and vim.v.shell_error == 0, output
 end
 
 M.install = function()
@@ -116,99 +118,103 @@ M.install = function()
     return false
   end
 
-  -- Find plugin root path
-  local plugin_root = nil
-  local rtp = vim.api.nvim_list_runtime_paths()
-  for _, path in ipairs(rtp) do
-    if path:match("snapshot%.nvim") or path:match("snapshot$") then
-      plugin_root = path
-      break
-    end
-  end
-
-  if not plugin_root then
-    vim.notify("Could not find snapshot.nvim plugin path", vim.log.levels.ERROR)
-    return false
-  end
-
-  local url = "https://github.com/smit4k/snapshot.nvim/releases/download/" .. VERSION .. "/" .. filename
-  local dest_dir = plugin_root .. "/generator/target/release/"
-  local dest = dest_dir .. generator_bin
-
-  -- Create destination directory
+  local dest_dir = release_dir
+  local dest = generator_path
   vim.fn.mkdir(dest_dir, "p")
 
+  local url = "https://github.com/smit4k/snapshot.nvim/releases/download/" .. VERSION .. "/" .. filename
+  local download = dest .. ".download-" .. vim.fn.getpid()
   vim.notify("Downloading snapshot generator...", vim.log.levels.INFO)
+  local downloaded = run_install_command({ "curl", "-fLo", download, url })
+  if downloaded and not is_windows then
+    downloaded = run_install_command({ "chmod", "+x", download })
+  end
 
-  local result = vim.fn.system({ "curl", "-fLo", dest, "--create-dirs", url })
-
-  if vim.v.shell_error ~= 0 then
+  if not downloaded or vim.fn.rename(download, dest) ~= 0 then
+    vim.fn.delete(download)
     vim.notify("Download failed, falling back to cargo build...", vim.log.levels.WARN)
-
-    -- Fallback to cargo build
-    local cargo_result = vim.fn.system({ "cargo", "build", "--release" }, nil)
-    if vim.v.shell_error ~= 0 then
-      vim.notify("Cargo build failed: " .. cargo_result, vim.log.levels.ERROR)
+    local built, output = run_install_command({
+      "cargo",
+      "build",
+      "--locked",
+      "--release",
+      "--manifest-path",
+      generator_manifest,
+      "--target-dir",
+      target_dir,
+    })
+    if not built then
+      vim.notify("Cargo build failed: " .. output, vim.log.levels.ERROR)
       return false
     end
   end
 
-  -- Make binary executable on Unix
-  if not is_windows then
-    vim.fn.system({ "chmod", "+x", dest })
+  if vim.fn.executable(dest) ~= 1 then
+    vim.notify("Snapshot generator is missing or not executable: " .. dest, vim.log.levels.ERROR)
+    return false
   end
 
-  -- Download font
-  vim.notify("Downloading font...", vim.log.levels.INFO)
-  local font_url = "https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip"
-  local font_zip = dest_dir .. "JetBrainsMono.zip"
-  local font_result = vim.fn.system({ "curl", "-fLo", font_zip, "--create-dirs", font_url })
+  if vim.fn.getfsize(dest_dir .. FONT_NAME) <= 0 then
+    vim.notify("Downloading font...", vim.log.levels.INFO)
+    local font_url = "https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip"
+    local font_zip = vim.fn.tempname() .. ".zip"
+    local font_downloaded, output = run_install_command({ "curl", "-fLo", font_zip, font_url })
+    if not font_downloaded then
+      vim.fn.delete(font_zip)
+      vim.notify("Font download failed: " .. output, vim.log.levels.ERROR)
+      return false
+    end
 
-  if vim.v.shell_error == 0 then
-    -- Extract the font (we only need Regular weight)
+    local extracted
     if is_windows then
-      local extract_dir = dest_dir .. "font_extract_tmp"
+      local extract_dir = vim.fn.tempname()
       local ps_script = table.concat({
+        "$ErrorActionPreference='Stop'",
         "$zip='" .. font_zip:gsub("'", "''") .. "'",
         "$tmp='" .. extract_dir:gsub("'", "''") .. "'",
         "$dest='" .. dest_dir:gsub("'", "''") .. "'",
-        "Expand-Archive -Path $zip -DestinationPath $tmp -Force",
-        "$font=Get-ChildItem -Path $tmp -Recurse -Filter 'JetBrainsMono-Regular.ttf' | Select-Object -First 1",
-        "if (-not $font) { Write-Error 'JetBrainsMono-Regular.ttf not found in archive'; exit 1 }",
-        "Copy-Item -Path $font.FullName -Destination (Join-Path $dest 'JetBrainsMono-Regular.ttf') -Force",
-        "Remove-Item -Path $tmp -Recurse -Force",
-      }, "; ")
-
-      vim.fn.system({ "powershell", "-NoProfile", "-Command", ps_script })
-      if vim.v.shell_error ~= 0 then
-        vim.notify("Font extraction failed on Windows", vim.log.levels.WARN)
-      end
+        "Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force",
+        "try {",
+        "$font=Get-ChildItem -LiteralPath $tmp -Recurse -Filter '" .. FONT_NAME .. "' | Select-Object -First 1",
+        "if (-not $font) { throw 'Font not found in archive' }",
+        "Copy-Item -LiteralPath $font.FullName -Destination (Join-Path $dest '" .. FONT_NAME .. "') -Force",
+        "} finally { Remove-Item -LiteralPath $tmp -Recurse -Force }",
+      }, "\n")
+      extracted, output = run_install_command({ "powershell", "-NoProfile", "-Command", ps_script })
     else
-      vim.fn.system({ "unzip", "-j", "-o", font_zip, "fonts/ttf/JetBrainsMono-Regular.ttf", "-d", dest_dir })
-      if vim.v.shell_error ~= 0 then
-        vim.notify("Font extraction failed", vim.log.levels.WARN)
-      end
+      extracted, output =
+        run_install_command({ "unzip", "-j", "-o", font_zip, "fonts/ttf/" .. FONT_NAME, "-d", dest_dir })
     end
-    -- Cleanup zip
     vim.fn.delete(font_zip)
-  else
-    vim.notify("Font download failed", vim.log.levels.WARN)
+
+    if not extracted or vim.fn.getfsize(dest_dir .. FONT_NAME) <= 0 then
+      vim.fn.delete(dest_dir .. FONT_NAME)
+      vim.notify("Font extraction failed: " .. output, vim.log.levels.ERROR)
+      return false
+    end
   end
 
-  -- Write version file so we can detect outdated binaries on future startups
-  local version_file = dest_dir .. ".version"
-  local vf = io.open(version_file, "w")
-  if vf then
-    vf:write(VERSION)
-    vf:close()
+  local written, status = pcall(vim.fn.writefile, { VERSION }, dest_dir .. ".version")
+  if not written or status ~= 0 then
+    vim.notify("Failed to write generator version: " .. tostring(status), vim.log.levels.ERROR)
+    return false
   end
 
   vim.notify("Snapshot generator installed successfully!", vim.log.levels.INFO)
   return true
 end
 
-M.hello = function()
-  return module.my_first_function(M.config.opt)
+M.debug = function()
+  print("=== Snapshot Debug Info ===")
+  print("Platform: " .. (is_windows and "Windows" or "Unix"))
+  print("Plugin path: " .. plugin_root)
+  if vim.fn.executable(generator_path) == 1 then
+    print("Generator found: " .. generator_path)
+    print(string.format("Size: %.1f MB", vim.fn.getfsize(generator_path) / 1024 / 1024))
+  else
+    print("Generator not found: " .. generator_path)
+    print("Run: " .. build_command)
+  end
 end
 
 M.capture_highlights = function(bufnr)
@@ -217,39 +223,74 @@ M.capture_highlights = function(bufnr)
   return extmarks
 end
 
--- Generate a snapshot image from the current buffer or visual selection
----@param opts table? Optional configuration overrides
-M.snapshot = function(opts)
-  opts = opts or {}
-  local bufnr = vim.api.nvim_get_current_buf()
-
-  -- Check if we have a visual selection by checking the marks
-  local start_pos = vim.fn.getpos("'<")
-  local end_pos = vim.fn.getpos("'>")
-  local lines
-  local start_line_num = 1
-
-  -- If the visual marks are valid and different, use them
-  if start_pos[2] > 0 and end_pos[2] > 0 and start_pos[2] <= end_pos[2] then
-    start_line_num = start_pos[2]
-    lines = vim.api.nvim_buf_get_lines(bufnr, start_pos[2] - 1, end_pos[2], false)
-
-    -- Handle character-wise visual selection
-    -- If it's a single line and columns are specified
-    if #lines == 1 and start_pos[3] > 0 and end_pos[3] > 0 then
-      lines[1] = string.sub(lines[1], start_pos[3], end_pos[3])
-    elseif #lines > 1 and start_pos[3] > 0 and end_pos[3] > 0 then
-      -- Multi-line character-wise selection
-      lines[1] = string.sub(lines[1], start_pos[3])
-      lines[#lines] = string.sub(lines[#lines], 1, end_pos[3])
+local function crop_visual_lines(lines, first, last, mode)
+  local exclusive = vim.o.selection == "exclusive"
+  local left_col, right_col
+  if mode == "\22" then
+    local first_col, last_col = vim.fn.virtcol("'<"), vim.fn.virtcol("'>")
+    left_col, right_col = math.min(first_col, last_col), math.max(first_col, last_col)
+    if exclusive and left_col < right_col then
+      right_col = right_col - 1
     end
-  else
-    -- No valid visual selection, capture the entire buffer
-    lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   end
 
-  -- Build the JSON payload
+  for i, line in ipairs(lines) do
+    local start_col, end_col = 0, #line.text
+    if mode == "v" then
+      if i == 1 then
+        start_col = first[3] - 1
+      end
+      if i == #lines then
+        local last_col = last[3]
+        if exclusive and (first[2] ~= last[2] or first[3] ~= last_col) then
+          end_col = last_col - 1
+        elseif last_col <= #line.text then
+          end_col = last_col + vim.str_utf_end(line.text, last_col)
+        end
+      end
+    elseif mode == "\22" then
+      -- shortcut: a selected cell within a tab or wide glyph keeps that glyph, until the renderer supports partial cells.
+      local row = first[2] + i - 1
+      if left_col > vim.fn.strdisplaywidth(line.text) then
+        start_col, end_col = #line.text, #line.text
+      else
+        start_col = vim.fn.virtcol2col(0, row, left_col) - 1
+        local last_col = vim.fn.virtcol2col(0, row, right_col)
+        end_col = last_col + vim.str_utf_end(line.text, last_col)
+      end
+    end
+
+    line.text = line.text:sub(start_col + 1, end_col)
+    local spans = {}
+    for _, span in ipairs(line.spans) do
+      local start = math.max(span.start, start_col)
+      local finish = math.min(span["end"], end_col)
+      if start < finish then
+        span.start = start - start_col
+        span["end"] = finish - start_col
+        spans[#spans + 1] = span
+      end
+    end
+    line.spans = spans
+  end
+end
+
+--- Generate a snapshot image from the current buffer or a command range.
+---@param opts table? Optional configuration overrides
+---@param range table? Command line range and optional Visual selection
+M.snapshot = function(opts, range)
+  opts = opts or {}
+  local bufnr = vim.api.nvim_get_current_buf()
+  local start_line_num = range and range.line1 or 1
+  local lines = vim.api.nvim_buf_get_lines(bufnr, start_line_num - 1, range and range.line2 or -1, false)
   local buffer_json = require("snapshot.json").build_snapshot_json(bufnr, lines, start_line_num - 1)
+  if range and range.visual then
+    local mode = vim.fn.visualmode()
+    local first, last = vim.fn.getpos("'<"), vim.fn.getpos("'>")
+    if first[2] == range.line1 and last[2] == range.line2 and (mode == "v" or mode == "\22") then
+      crop_visual_lines(buffer_json, first, last, mode)
+    end
+  end
 
   -- Merge config with opts
   local final_config = vim.tbl_deep_extend("force", M.config, opts)
@@ -265,132 +306,54 @@ M.snapshot = function(opts)
     final_config.foreground = editor_colors.fg
   end
 
-  -- Handle snapshot_dir configuration
-  if final_config.snapshot_dir then
-    -- Expand tilde and env vars
-    final_config.snapshot_dir = vim.fn.expand(final_config.snapshot_dir)
-    -- Remove trailing slash
-    final_config.snapshot_dir = final_config.snapshot_dir:gsub("/$", "")
-
-    -- Validate that snapshot_dir is or will be a directory
-    if vim.fn.isdirectory(final_config.snapshot_dir) == 0 then
-      -- Check if it exists as a file (error condition)
-      if vim.fn.filereadable(final_config.snapshot_dir) == 1 then
-        vim.notify(
-          "Error: snapshot_dir '" .. final_config.snapshot_dir .. "' exists but is not a directory.",
-          vim.log.levels.ERROR
-        )
-        return nil
-      end
-      -- Directory doesn't exist yet, which is fine (Rust will create it)
-    end
-  end
-
-  -- Normalize user-provided output path (do NOT set a default filename here)
-  -- If output_path is nil, we'll remove it from the config so Rust uses its default (timestamped)
-  if final_config.output_path then
-    -- Expand tilde and env vars
-    final_config.output_path = vim.fn.expand(final_config.output_path)
-
-    -- If user passed a directory, let Rust generate the filename
-    if vim.fn.isdirectory(final_config.output_path) == 1 then
-      final_config.output_path = final_config.output_path:gsub("/$", "")
-    elseif final_config.output_path:match("/$") then
-      -- Trailing slash but dir may not exist yet: still treat as directory
-      final_config.output_path = final_config.output_path:gsub("/$", "")
-    end
-
-    -- Optional: warn about weird extensions (only when user set a file)
-    if
-      not final_config.output_path:match("%.[pP][nN][gG]$")
-      and not final_config.output_path:match("%.[jJ][pP][eE]?[gG]$")
-      and not final_config.output_path:match("%.[wW][eE][bB][pP]$")
-      and vim.fn.isdirectory(final_config.output_path) == 0
-    then
-      vim.notify(
-        "Warning: output_path '"
-          .. final_config.output_path
-          .. "' may not have a valid image extension (.png, .jpg, .jpeg, .webp).",
-        vim.log.levels.WARN
-      )
-    end
-  end
-
-  -- Build payload, excluding output_path/snapshot_dir if they're nil so Rust uses its default
-  local config_for_json = {}
-  for k, v in pairs(final_config) do
-    if (k ~= "output_path" and k ~= "snapshot_dir") or v ~= nil then
-      config_for_json[k] = v
-    end
-  end
-
   local payload = {
     lines = buffer_json,
-    config = config_for_json,
+    config = final_config,
   }
 
   local json_string = vim.fn.json_encode(payload)
 
-  -- Find the generator binary using multiple methods for reliability
-  local generator_path
-
-  -- Method 1: Try to find via the loaded module path
-  local snapshot_module = package.loaded["snapshot"]
-  if snapshot_module and snapshot_module.__file then
-    local module_path = snapshot_module.__file
-    local plugin_root = vim.fn.fnamemodify(module_path, ":h:h")
-    generator_path = plugin_root .. "/generator/target/release/" .. generator_bin
-  end
-
-  -- Method 2: Use runtimepath to find the plugin
-  if not generator_path or vim.fn.executable(generator_path) ~= 1 then
-    local rtp = vim.api.nvim_list_runtime_paths()
-    for _, path in ipairs(rtp) do
-      if path:match("snapshot%.nvim") or path:match("snapshot$") then
-        local test_path = path .. "/generator/target/release/" .. generator_bin
-        if vim.fn.executable(test_path) == 1 then
-          generator_path = test_path
-          break
-        end
-      end
-    end
-  end
-
-  -- Check if the generator exists
-  if not generator_path or vim.fn.executable(generator_path) ~= 1 then
-    -- Try to provide helpful error message with correct path
-    local rtp = vim.api.nvim_list_runtime_paths()
-    local plugin_path = nil
-    for _, path in ipairs(rtp) do
-      if path:match("snapshot%.nvim") or path:match("snapshot$") then
-        plugin_path = path
-        break
-      end
-    end
-
-    if plugin_path then
-      vim.notify(
-        "Snapshot generator not found. Please run:\ncd " .. plugin_path .. "/generator && cargo build --release",
-        vim.log.levels.ERROR
-      )
-    else
-      vim.notify(
-        "Snapshot generator not found and plugin path could not be determined.\nPlease build the generator manually.",
-        vim.log.levels.ERROR
-      )
-    end
+  if vim.fn.executable(generator_path) ~= 1 then
+    vim.notify("Snapshot generator not found. Please run:\n" .. build_command, vim.log.levels.ERROR)
     return nil
   end
 
-  -- Run the generator (pass JSON via stdin using vim.fn.system's second argument)
-  local output = vim.fn.system({ generator_path }, json_string)
-
-  if vim.v.shell_error ~= 0 then
-    vim.notify("Failed to generate snapshot: " .. output, vim.log.levels.ERROR)
+  local output, errors = "", ""
+  local started, job = pcall(vim.fn.jobstart, { generator_path }, {
+    stdout_buffered = true,
+    stderr_buffered = true,
+    on_stdout = function(_, data)
+      output = table.concat(data, "\n")
+    end,
+    on_stderr = function(_, data)
+      errors = table.concat(data, "\n")
+    end,
+  })
+  if not started or job <= 0 then
+    vim.notify("Failed to start snapshot generator: " .. tostring(job), vim.log.levels.ERROR)
     return nil
   end
 
-  local output_path = output:gsub("%s+", "")
+  local sent, bytes = pcall(vim.fn.chansend, job, json_string)
+  pcall(vim.fn.chanclose, job, "stdin")
+  local status = vim.fn.jobwait({ job })[1]
+  if status < 0 then
+    pcall(vim.fn.jobstop, job)
+  end
+
+  local output_path = output:gsub("\r?\n$", "")
+  if status ~= 0 or not sent or bytes == 0 or output_path == "" then
+    local detail = vim.trim(errors)
+    if detail == "" then
+      detail = "generator exited without a saved path (status " .. status .. ")"
+    end
+    vim.notify("Failed to generate snapshot: " .. detail, vim.log.levels.ERROR)
+    return nil
+  end
+  if errors ~= "" then
+    vim.notify(vim.trim(errors), vim.log.levels.WARN)
+  end
+
   vim.notify("Snapshot saved to: " .. output_path, vim.log.levels.INFO)
   return output_path
 end

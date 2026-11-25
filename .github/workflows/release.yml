@@ -35,6 +35,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Verify installer version matches the release tag
+        shell: bash
+        run: grep -Fx "local VERSION = \"${GITHUB_REF_NAME}\"" lua/snapshot.lua
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -42,7 +46,7 @@ jobs:
 
       - name: Build
         working-directory: generator
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --locked --release --target ${{ matrix.target }}
 
       - name: Rename binary (Unix)
         if: matrix.os != 'windows-latest'
