@@ -35,4 +35,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --manifest-path generator/Cargo.toml
+      - run: cargo test --locked --manifest-path generator/Cargo.toml

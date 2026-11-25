@@ -35,8 +35,9 @@ end
 local ok, failure = pcall(function()
   assert(not snapshot.install())
   assert(vim.fn.filereadable(version) == 0, "A partial install must not write a version")
-  assert(cargo_args[5] == root .. "/generator/Cargo.toml", vim.inspect(cargo_args))
-  assert(cargo_args[7] == root .. "/generator/target", vim.inspect(cargo_args))
+  assert(cargo_args[3] == "--locked", vim.inspect(cargo_args))
+  assert(cargo_args[6] == root .. "/generator/Cargo.toml", vim.inspect(cargo_args))
+  assert(cargo_args[8] == root .. "/generator/target", vim.inspect(cargo_args))
   fail_font = false
   snapshot.setup()
   assert(vim.fn.filereadable(version) == 1, "Setup must retry a partial install")

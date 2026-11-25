@@ -6,7 +6,6 @@ vendor/
 
 # Rust build artifacts
 generator/target/
-generator/Cargo.lock
 
 # Test files
 test_*.lua

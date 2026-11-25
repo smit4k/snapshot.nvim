@@ -7,7 +7,7 @@ local target_dir = plugin_root .. "/generator/target"
 local release_dir = target_dir .. "/release/"
 local generator_path = release_dir .. generator_bin
 local generator_manifest = plugin_root .. "/generator/Cargo.toml"
-local build_command = "cargo build --release --manifest-path "
+local build_command = "cargo build --locked --release --manifest-path "
   .. vim.fn.shellescape(generator_manifest)
   .. " --target-dir "
   .. vim.fn.shellescape(target_dir)
@@ -136,6 +136,7 @@ M.install = function()
     local built, output = run_install_command({
       "cargo",
       "build",
+      "--locked",
       "--release",
       "--manifest-path",
       generator_manifest,

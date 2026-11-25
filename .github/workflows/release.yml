@@ -46,7 +46,7 @@ jobs:
 
       - name: Build
         working-directory: generator
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --locked --release --target ${{ matrix.target }}
 
       - name: Rename binary (Unix)
         if: matrix.os != 'windows-latest'
