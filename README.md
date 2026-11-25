@@ -48,6 +48,8 @@ return {
 Select code in Visual mode and run `:Snapshot`.
 To capture an entire buffer, run `:Snapshot` in Normal mode. An explicit line range, such as `:5,10Snapshot`, captures those full lines.
 
+Use `snapshot_dir` to choose the directory for timestamped PNGs. Set `output_path` to an explicit image file, an existing directory, or a new directory marked by a trailing slash. JPEG output flattens transparency onto white.
+
 ## Contributing
 
 Contributions are welcome! Please open an [issue](https://github.com/smit4k/snapshot.nvim/issues) to discuss your ideas or problems or submit a [pull request](https://github.com/smit4k/snapshot.nvim/pulls) with your changes.

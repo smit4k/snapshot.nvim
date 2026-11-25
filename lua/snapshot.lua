@@ -17,7 +17,7 @@ end
 
 ---@class Config
 ---@field snapshot_dir string? Directory to save snapshots (defaults to $HOME)
----@field output_path string? Path to save the snapshot (defaults to snapshot_dir/snapshot-{timestamp}.png)
+---@field output_path string? Image file path or a directory for a generated PNG
 ---@field scale number? Resolution scale factor for HiDPI/Retina rendering (default: 2)
 ---@field padding number? Padding around the code (default: 80)
 ---@field line_height number? Height of each line in pixels (default: 28)
@@ -315,68 +315,9 @@ M.snapshot = function(opts, range)
     final_config.foreground = editor_colors.fg
   end
 
-  -- Handle snapshot_dir configuration
-  if final_config.snapshot_dir then
-    -- Expand tilde and env vars
-    final_config.snapshot_dir = vim.fn.expand(final_config.snapshot_dir)
-    -- Remove trailing slash
-    final_config.snapshot_dir = final_config.snapshot_dir:gsub("/$", "")
-
-    -- Validate that snapshot_dir is or will be a directory
-    if vim.fn.isdirectory(final_config.snapshot_dir) == 0 then
-      -- Check if it exists as a file (error condition)
-      if vim.fn.filereadable(final_config.snapshot_dir) == 1 then
-        vim.notify(
-          "Error: snapshot_dir '" .. final_config.snapshot_dir .. "' exists but is not a directory.",
-          vim.log.levels.ERROR
-        )
-        return nil
-      end
-      -- Directory doesn't exist yet, which is fine (Rust will create it)
-    end
-  end
-
-  -- Normalize user-provided output path (do NOT set a default filename here)
-  -- If output_path is nil, we'll remove it from the config so Rust uses its default (timestamped)
-  if final_config.output_path then
-    -- Expand tilde and env vars
-    final_config.output_path = vim.fn.expand(final_config.output_path)
-
-    -- If user passed a directory, let Rust generate the filename
-    if vim.fn.isdirectory(final_config.output_path) == 1 then
-      final_config.output_path = final_config.output_path:gsub("/$", "")
-    elseif final_config.output_path:match("/$") then
-      -- Trailing slash but dir may not exist yet: still treat as directory
-      final_config.output_path = final_config.output_path:gsub("/$", "")
-    end
-
-    -- Optional: warn about weird extensions (only when user set a file)
-    if
-      not final_config.output_path:match("%.[pP][nN][gG]$")
-      and not final_config.output_path:match("%.[jJ][pP][eE]?[gG]$")
-      and not final_config.output_path:match("%.[wW][eE][bB][pP]$")
-      and vim.fn.isdirectory(final_config.output_path) == 0
-    then
-      vim.notify(
-        "Warning: output_path '"
-          .. final_config.output_path
-          .. "' may not have a valid image extension (.png, .jpg, .jpeg, .webp).",
-        vim.log.levels.WARN
-      )
-    end
-  end
-
-  -- Build payload, excluding output_path/snapshot_dir if they're nil so Rust uses its default
-  local config_for_json = {}
-  for k, v in pairs(final_config) do
-    if (k ~= "output_path" and k ~= "snapshot_dir") or v ~= nil then
-      config_for_json[k] = v
-    end
-  end
-
   local payload = {
     lines = buffer_json,
-    config = config_for_json,
+    config = final_config,
   }
 
   local json_string = vim.fn.json_encode(payload)
@@ -432,15 +373,42 @@ M.snapshot = function(opts, range)
     return nil
   end
 
-  -- Run the generator (pass JSON via stdin using vim.fn.system's second argument)
-  local output = vim.fn.system({ generator_path }, json_string)
-
-  if vim.v.shell_error ~= 0 then
-    vim.notify("Failed to generate snapshot: " .. output, vim.log.levels.ERROR)
+  local output, errors = "", ""
+  local started, job = pcall(vim.fn.jobstart, { generator_path }, {
+    stdout_buffered = true,
+    stderr_buffered = true,
+    on_stdout = function(_, data)
+      output = table.concat(data, "\n")
+    end,
+    on_stderr = function(_, data)
+      errors = table.concat(data, "\n")
+    end,
+  })
+  if not started or job <= 0 then
+    vim.notify("Failed to start snapshot generator: " .. tostring(job), vim.log.levels.ERROR)
     return nil
   end
 
-  local output_path = output:gsub("%s+", "")
+  local sent, bytes = pcall(vim.fn.chansend, job, json_string)
+  pcall(vim.fn.chanclose, job, "stdin")
+  local status = vim.fn.jobwait({ job })[1]
+  if status < 0 then
+    pcall(vim.fn.jobstop, job)
+  end
+
+  local output_path = output:gsub("\r?\n$", "")
+  if status ~= 0 or not sent or bytes == 0 or output_path == "" then
+    local detail = vim.trim(errors)
+    if detail == "" then
+      detail = "generator exited without a saved path (status " .. status .. ")"
+    end
+    vim.notify("Failed to generate snapshot: " .. detail, vim.log.levels.ERROR)
+    return nil
+  end
+  if errors ~= "" then
+    vim.notify(vim.trim(errors), vim.log.levels.WARN)
+  end
+
   vim.notify("Snapshot saved to: " .. output_path, vim.log.levels.INFO)
   return output_path
 end

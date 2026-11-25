@@ -5,12 +5,12 @@ use ab_glyph::{Font, FontVec, PxScale};
 use anyhow::{anyhow, Context, Result};
 use arboard::Clipboard;
 use chrono::offset::Local;
-use chrono::DateTime;
-use image::{ImageBuffer, Pixel, Rgba, RgbaImage};
+use image::{ImageBuffer, ImageEncoder, ImageFormat, Pixel, Rgba, RgbaImage};
 use imageproc::drawing::draw_text_mut;
 use serde::Deserialize;
-use std::io::{self, Read};
-use std::path::PathBuf;
+use std::fs::{self, File};
+use std::io::{self, BufWriter, Read, Write};
+use std::path::{Path, PathBuf};
 
 use shadow::{apply_outer_shadow, composite_image_onto};
 use utils::{apply_rounded_corners, hex_to_rgba, measure_text_width};
@@ -151,23 +151,6 @@ fn render_scale(scale: f32) -> f32 {
         scale
     } else {
         FALLBACK_RENDER_SCALE
-    }
-}
-
-fn resolve_output_path(config: &Config) -> String {
-    if let Some(path) = &config.output_path {
-        return path.clone();
-    }
-
-    let now: DateTime<Local> = Local::now();
-    let formatted_time = now.format("%Y-%m-%d_%H-%M-%S").to_string();
-    let filename = format!("snapshot-{formatted_time}.png");
-
-    if let Some(dir) = &config.snapshot_dir {
-        format!("{dir}/{filename}")
-    } else {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        format!("{home}/{filename}")
     }
 }
 
@@ -488,21 +471,97 @@ fn copy_to_clipboard(image: &RgbaImage) -> Result<()> {
         .map_err(|error| anyhow!("Failed to copy to clipboard: {error}"))
 }
 
-fn save_image(image: &RgbaImage, output_path: &str) -> Result<String> {
-    let expanded_path = shellexpand::full(output_path)
-        .context("Failed to expand output path")?
-        .to_string();
+fn expand_path(path: &str) -> Result<PathBuf> {
+    Ok(PathBuf::from(
+        shellexpand::full(path)
+            .with_context(|| format!("Failed to expand output path {path:?}"))?
+            .as_ref(),
+    ))
+}
 
-    if let Some(parent) = std::path::Path::new(&expanded_path).parent() {
-        std::fs::create_dir_all(parent).context("Failed to create parent directories")?;
+fn save_generated_png(image: &RgbaImage, directory: &Path, timestamp: &str) -> Result<PathBuf> {
+    fs::create_dir_all(directory)
+        .with_context(|| format!("Failed to create output directory {}", directory.display()))?;
+
+    let mut suffix = 0;
+    loop {
+        let name = if suffix == 0 {
+            format!("snapshot-{timestamp}.png")
+        } else {
+            format!("snapshot-{timestamp}-{suffix}.png")
+        };
+        let path = directory.join(name);
+        let file = match File::create_new(&path) {
+            Ok(file) => file,
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                suffix += 1;
+                continue;
+            }
+            Err(err) => {
+                return Err(err).with_context(|| format!("Failed to create {}", path.display()));
+            }
+        };
+
+        let mut writer = BufWriter::new(file);
+        let result = image::codecs::png::PngEncoder::new(&mut writer)
+            .write_image(
+                image.as_raw(),
+                image.width(),
+                image.height(),
+                image::ExtendedColorType::Rgba8,
+            )
+            .map_err(anyhow::Error::from)
+            .and_then(|()| writer.flush().map_err(anyhow::Error::from));
+        drop(writer);
+
+        if let Err(err) = result {
+            let _ = fs::remove_file(&path);
+            return Err(err).with_context(|| format!("Failed to save image to {}", path.display()));
+        }
+        return Ok(path);
     }
+}
 
-    image.save(&expanded_path).context("Failed to save image")?;
-    Ok(expanded_path)
+fn save_image(image: &RgbaImage, config: &Config) -> Result<PathBuf> {
+    let directory = if let Some(output_path) = &config.output_path {
+        let path = expand_path(output_path)?;
+        if path.is_dir() || output_path.ends_with(std::path::is_separator) {
+            path
+        } else {
+            let format = ImageFormat::from_path(&path)
+                .with_context(|| format!("Unsupported image path {}", path.display()))?;
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!("Failed to create output directory {}", parent.display())
+                })?;
+            }
+
+            let saved = if format == ImageFormat::Jpeg {
+                let flattened = ImageBuffer::from_fn(image.width(), image.height(), |x, y| {
+                    let mut pixel = Rgba([255; 4]);
+                    pixel.blend(image.get_pixel(x, y));
+                    pixel.to_rgb()
+                });
+                flattened.save_with_format(&path, format)
+            } else {
+                image.save_with_format(&path, format)
+            };
+            saved.with_context(|| format!("Failed to save image to {}", path.display()))?;
+            return Ok(path);
+        }
+    } else if let Some(directory) = &config.snapshot_dir {
+        expand_path(directory)?
+    } else {
+        std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .map_or_else(|| PathBuf::from("."), PathBuf::from)
+    };
+
+    let timestamp = Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    save_generated_png(image, &directory, &timestamp)
 }
 
 fn generate_image(input: Input) -> Result<()> {
-    let output_path = resolve_output_path(&input.config);
     let font = load_font()?;
     let render = build_render_config(&input.config);
     let scaled_font = font.as_scaled(render.scale);
@@ -522,14 +581,14 @@ fn generate_image(input: Input) -> Result<()> {
     let card = apply_card_effects(card, &input.config, &render);
     let image = finalize_output(&card, &input.config, &render);
 
+    let saved_path = save_image(&image, &input.config)?;
     if input.config.clipboard {
         copy_to_clipboard(&image).unwrap_or_else(|error| {
             eprintln!("Warning: {error}");
         });
     }
 
-    let saved_path = save_image(&image, &output_path)?;
-    println!("{saved_path}");
+    println!("{}", saved_path.display());
     Ok(())
 }
 
@@ -547,7 +606,7 @@ fn main() -> Result<()> {
 mod tests {
     use super::{
         apply_card_effects, build_render_config, normalize_index, normalize_span_range,
-        render_scale, resolve_output_path, Config,
+        render_scale, save_generated_png, Config,
     };
     use image::{Rgba, RgbaImage};
 
@@ -595,11 +654,21 @@ mod tests {
     }
 
     #[test]
-    fn output_path_prefers_explicit_value() {
-        let mut config = base_config();
-        config.output_path = Some("/tmp/out.png".to_string());
+    fn generated_paths_preserve_existing_images() {
+        let directory = std::env::temp_dir().join(format!(
+            "snapshot-generator-collision-{}",
+            std::process::id()
+        ));
+        let image = RgbaImage::from_pixel(2, 2, Rgba([1, 2, 3, 255]));
+        let first = save_generated_png(&image, &directory, "same-second").unwrap();
+        let second_image = RgbaImage::from_pixel(2, 2, Rgba([3, 2, 1, 255]));
+        let second = save_generated_png(&second_image, &directory, "same-second").unwrap();
+        let first_pixel = image::open(&first).unwrap().to_rgba8().get_pixel(0, 0).0;
+        std::fs::remove_dir_all(directory).unwrap();
 
-        assert_eq!(resolve_output_path(&config), "/tmp/out.png");
+        assert_eq!(first.file_name().unwrap(), "snapshot-same-second.png");
+        assert_eq!(second.file_name().unwrap(), "snapshot-same-second-1.png");
+        assert_eq!(first_pixel, [1, 2, 3, 255]);
     }
 
     #[test]

@@ -2,17 +2,43 @@ local snapshot = require("snapshot")
 local snapshot_json = require("snapshot.json")
 local build_snapshot_json = snapshot_json.build_snapshot_json
 local executable = vim.fn.executable
-local system = vim.fn.system
-local saved_path = "/tmp/snapshot.png"
-local payload
+local original = {
+  jobstart = vim.fn.jobstart,
+  chansend = vim.fn.chansend,
+  chanclose = vim.fn.chanclose,
+  jobwait = vim.fn.jobwait,
+}
+local saved_path = "/tmp/snapshot output.png"
+local callbacks, payload
+local warnings = {}
 
 vim.fn.executable = function()
   return 1
 end
 snapshot.__file = "lua/snapshot.lua"
-vim.fn.system = function(_, input)
+vim.fn.jobstart = function(_, options)
+  callbacks = options
+  return 1
+end
+vim.fn.chansend = function(_, input)
   payload = vim.json.decode(input)
-  return saved_path .. "\n"
+  return #input
+end
+vim.fn.chanclose = function()
+  return 1
+end
+vim.fn.jobwait = function()
+  callbacks.on_stdout(1, { saved_path .. "\r", "" })
+  callbacks.on_stderr(1, { "Clipboard unavailable", "" })
+  return { 0 }
+end
+local notify = vim.notify
+vim.notify = function(message, level)
+  if level == vim.log.levels.WARN then
+    warnings[#warnings + 1] = message
+  elseif level == vim.log.levels.ERROR then
+    error(message)
+  end
 end
 snapshot_json.build_snapshot_json = function(_, lines, start_row)
   local result = {}
@@ -53,8 +79,10 @@ assert(#payload.lines == 3 and payload.config.start_line == 1, vim.inspect(paylo
 vim.cmd('2Snapshot {"start_line":99}')
 assert(payload.config.start_line == 99, vim.inspect(payload))
 
+assert(snapshot.snapshot() == saved_path, "Snapshot must preserve spaces in its output path")
+assert(warnings[#warnings] == "Clipboard unavailable", "Generator warnings must remain separate from stdout")
+
 payload = nil
-local notify = vim.notify
 local message
 vim.notify = function(output)
   message = output
@@ -64,6 +92,8 @@ vim.notify = notify
 assert(payload == nil and message:find("Invalid JSON arguments", 1, true), "Snapshot accepts a JSON config object")
 
 vim.fn.executable = executable
-vim.fn.system = system
+for name, fn in pairs(original) do
+  vim.fn[name] = fn
+end
 snapshot.__file = nil
 snapshot_json.build_snapshot_json = build_snapshot_json
