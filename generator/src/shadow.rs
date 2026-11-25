@@ -21,18 +21,36 @@ fn box_blur_h(src: &[u8], dst: &mut [u8], w: usize, h: usize, radius: usize) {
 
 /// Single-pass vertical box blur on an alpha-only buffer stored row-major.
 fn box_blur_v(src: &[u8], dst: &mut [u8], w: usize, h: usize, radius: usize) {
-    let diam = radius * 2 + 1;
-    for x in 0..w {
-        let mut sum: u32 = (radius as u32 + 1) * src[x] as u32;
-        for i in 0..radius {
-            sum += src[i.min(h - 1) * w + x] as u32;
+    // Keep each row segment contiguous while bounding the column sums to the stack.
+    const STRIPE: usize = 128;
+    let diam = (radius * 2 + 1) as u32;
+    for first_x in (0..w).step_by(STRIPE) {
+        let count = STRIPE.min(w - first_x);
+        let mut sums = [0u32; STRIPE];
+        let sums = &mut sums[..count];
+        for (sum, &alpha) in sums.iter_mut().zip(&src[first_x..first_x + count]) {
+            *sum = (radius as u32 + 1) * alpha as u32;
+        }
+        for row in 0..radius {
+            let start = row.min(h - 1) * w + first_x;
+            for (sum, &alpha) in sums.iter_mut().zip(&src[start..start + count]) {
+                *sum += alpha as u32;
+            }
         }
         for y in 0..h {
-            let bottom = (y + radius).min(h - 1);
-            let top = (y as isize - radius as isize - 1).max(0) as usize;
-            sum += src[bottom * w + x] as u32;
-            dst[y * w + x] = (sum / diam as u32).min(255) as u8;
-            sum -= src[top * w + x] as u32;
+            let bottom = (y + radius).min(h - 1) * w + first_x;
+            let top = y.saturating_sub(radius + 1) * w + first_x;
+            let target = y * w + first_x;
+            for (((sum, &bottom_alpha), &top_alpha), pixel) in sums
+                .iter_mut()
+                .zip(&src[bottom..bottom + count])
+                .zip(&src[top..top + count])
+                .zip(&mut dst[target..target + count])
+            {
+                *sum += bottom_alpha as u32;
+                *pixel = (*sum / diam).min(255) as u8;
+                *sum -= top_alpha as u32;
+            }
         }
     }
 }
@@ -104,8 +122,12 @@ pub fn composite_image_onto(
 
             let dx = x + offset_x;
             let dy = y + offset_y;
-            let dst = *output.get_pixel(dx, dy);
-            output.put_pixel(dx, dy, source_over(src, dst));
+            let pixel = if src[3] == 255 {
+                src
+            } else {
+                source_over(src, *output.get_pixel(dx, dy))
+            };
+            output.put_pixel(dx, dy, pixel);
         }
     }
 }
@@ -188,13 +210,40 @@ pub fn apply_outer_shadow(
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_outer_shadow, boxes_for_gauss, composite_image_onto, source_over};
+    use super::{
+        apply_outer_shadow, box_blur_v, boxes_for_gauss, composite_image_onto, source_over,
+    };
     use image::{ImageBuffer, Rgba};
 
     #[test]
     fn gaussian_boxes_are_stable() {
         assert_eq!(boxes_for_gauss(0.0), [1, 1, 1]);
         assert_eq!(boxes_for_gauss(1.5), [3, 3, 3]);
+    }
+
+    #[test]
+    fn vertical_blur_preserves_existing_values_across_stripes() {
+        let width = 131;
+        let height = 3;
+        let src: Vec<u8> = (0..width * height).map(|i| (i * 93) as u8).collect();
+        let mut dst = vec![0; src.len()];
+
+        for radius in [1, 4] {
+            box_blur_v(&src, &mut dst, width, height, radius);
+            let diameter = radius * 2 + 1;
+            for (i, &pixel) in dst.iter().enumerate() {
+                let (x, y) = (i % width, i / width);
+                let sum: usize = (0..diameter)
+                    .map(|offset| {
+                        let row = (y + offset).saturating_sub(radius).min(height - 1);
+                        usize::from(src[row * width + x])
+                    })
+                    .sum();
+                // The original rolling accumulator kept an extra first-row sample.
+                let expected = ((sum + usize::from(src[x])) / diameter).min(255);
+                assert_eq!(usize::from(pixel), expected, "radius {radius}, ({x}, {y})");
+            }
+        }
     }
 
     #[test]
@@ -209,13 +258,18 @@ mod tests {
     }
 
     #[test]
-    fn composite_image_onto_respects_offsets() {
-        let mut base = ImageBuffer::from_pixel(4, 4, Rgba([0, 0, 0, 255]));
-        let overlay = ImageBuffer::from_pixel(1, 1, Rgba([255, 0, 0, 255]));
+    fn composite_image_onto_respects_offsets_and_alpha() {
+        let background = Rgba([0, 0, 0, 255]);
+        let mut base = ImageBuffer::from_pixel(5, 3, background);
+        let overlay =
+            ImageBuffer::from_fn(3, 1, |x, _| Rgba([255, 0, 0, [255, 128, 0][x as usize]]));
+
         composite_image_onto(&mut base, &overlay, 2, 1);
 
+        assert_eq!(*base.get_pixel(0, 0), background);
         assert_eq!(*base.get_pixel(2, 1), Rgba([255, 0, 0, 255]));
-        assert_eq!(*base.get_pixel(0, 0), Rgba([0, 0, 0, 255]));
+        assert_eq!(*base.get_pixel(3, 1), Rgba([128, 0, 0, 255]));
+        assert_eq!(*base.get_pixel(4, 1), background);
     }
 
     #[test]
