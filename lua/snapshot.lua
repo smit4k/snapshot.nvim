@@ -87,7 +87,7 @@ M.setup = function(args)
   local installed_version = read_installed_version()
   if installed_version ~= VERSION then
     vim.notify(
-      "snapshot.nvim: updating binary from " .. (installed_version or "unknown") .. " to " .. VERSION .. "...",
+      "snapshot.nvim: updating binary from " .. (installed_version or "unknown") .. " → " .. VERSION .. "...",
       vim.log.levels.INFO
     )
     M.install()
@@ -200,7 +200,7 @@ M.install = function()
     return false
   end
 
-  vim.notify("Snapshot generator installed successfully!", vim.log.levels.INFO)
+  vim.api.nvim_echo({ { "Snapshot generator installed successfully!", "DiagnosticOk" } }, true, {})
   return true
 end
 
