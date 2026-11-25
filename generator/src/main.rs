@@ -6,7 +6,8 @@ use anyhow::{anyhow, ensure, Context, Result};
 use arboard::Clipboard;
 use chrono::offset::Local;
 use image::{ImageBuffer, ImageEncoder, ImageFormat, Pixel, Rgba, RgbaImage};
-use imageproc::drawing::draw_text_mut;
+use imageproc::drawing::{draw_filled_rect_mut, draw_text_mut};
+use imageproc::rect::Rect;
 use serde::Deserialize;
 use std::fs::{self, File};
 use std::io::{self, BufWriter, Read, Write};
@@ -21,6 +22,7 @@ const MAX_IMAGE_PIXELS: u64 = 40_000_000;
 const MAX_SCALED_FONT_SIZE: f32 = 4096.0;
 const LINE_NUMBER_COLOR_HEX: &str = "#5c6370";
 const TRAFFIC_LIGHT_SPACING: f32 = 20.0;
+const TRAFFIC_LIGHT_RADIUS: f32 = 6.0;
 const TITLE_BAR_HEIGHT: f32 = 32.0;
 
 #[derive(Debug, Deserialize)]
@@ -122,6 +124,7 @@ fn default_outer_padding() -> u32 {
 struct Input {
     lines: Vec<Line>,
     config: Config,
+    file_path: Option<String>,
 }
 
 struct RenderConfig {
@@ -130,6 +133,7 @@ struct RenderConfig {
     scaled_padding: u32,
     scaled_line_height: f32,
     scaled_outer_padding: u32,
+    scaled_border_radius: u32,
     scaled_title_bar_height: u32,
     bg_color: Rgba<u8>,
     default_fg: Rgba<u8>,
@@ -155,10 +159,19 @@ impl PreparedLine<'_> {
 
 struct PreparedLayout<'a> {
     lines: Vec<PreparedLine<'a>>,
+    file_path_header: Option<FilePathHeader<'a>>,
     line_number_width: f64,
     line_number_digits: usize,
+    header_height: u32,
+    traffic_light_center_y: f32,
     width: u32,
     height: u32,
+}
+
+struct FilePathHeader<'a> {
+    text: &'a str,
+    scale: PxScale,
+    x: u32,
 }
 
 fn render_scale(scale: f32) -> f32 {
@@ -208,6 +221,7 @@ fn build_render_config(config: &Config) -> Result<RenderConfig> {
         scaled_padding: (config.padding as f32 * render_scale) as u32,
         scaled_line_height,
         scaled_outer_padding: (config.outer_padding as f32 * render_scale) as u32,
+        scaled_border_radius: (config.border_radius as f32 * render_scale) as u32,
         scaled_title_bar_height: if config.traffic_lights {
             (TITLE_BAR_HEIGHT * render_scale).ceil() as u32
         } else {
@@ -300,19 +314,17 @@ where
     PreparedLine { segments }
 }
 
-fn measure_layout<'a, F, SF>(
-    lines: &'a [Line],
-    config: &Config,
+fn measure_layout<'a>(
+    input: &'a Input,
     render: &RenderConfig,
-    scaled_font: &SF,
-) -> Result<PreparedLayout<'a>>
-where
-    F: Font,
-    SF: ab_glyph::ScaleFont<F>,
-{
+    font: &FontVec,
+) -> Result<PreparedLayout<'a>> {
+    let lines = &input.lines;
+    let config = &input.config;
+    let scaled_font = font.as_scaled(render.scale);
     let prepared_lines: Vec<_> = lines
         .iter()
-        .map(|line| prepare_line(line, scaled_font, render.default_fg))
+        .map(|line| prepare_line(line, &scaled_font, render.default_fg))
         .collect();
 
     let (line_number_digits, line_number_width) = if config.line_numbers {
@@ -322,7 +334,7 @@ where
             .context("Starting line number is too large for the capture")?;
         let digits = last.to_string().len().max(4);
         let label = format!("{last:>digits$}  ");
-        (digits, measure_text_width(&label, scaled_font))
+        (digits, measure_text_width(&label, &scaled_font))
     } else {
         (0, 0.0)
     };
@@ -332,19 +344,49 @@ where
         .max_by(f64::total_cmp)
         .unwrap_or_else(|| 800.0 * f64::from(render.render_scale));
 
-    let padding = u64::from(render.scaled_padding) * 2;
-    let content_width = (max_content_width + line_number_width).ceil() as u32;
-    let width = u64::from(content_width) + padding;
-    let width = if config.traffic_lights {
-        width.max(u64::from(
-            (TRAFFIC_LIGHT_SPACING * 4.0 * render.render_scale).ceil() as u32,
-        ))
+    let file_path = input.file_path.as_deref().filter(|path| !path.is_empty());
+    let file_path_scale = PxScale::from(render.scale.y * 0.8);
+    let (header_height, traffic_light_center_y) = if file_path.is_some() {
+        let vertical_padding = (8.0 * render.render_scale).ceil();
+        let path_height = (file_path_scale.y.ceil() + 2.0 * vertical_padding) as u32;
+        let height = render.scaled_title_bar_height.max(path_height);
+        (height, height as f32 / 2.0)
     } else {
-        width
+        (
+            render.scaled_title_bar_height,
+            TITLE_BAR_HEIGHT * render.render_scale / 2.0,
+        )
     };
+    let padding = u64::from(render.scaled_padding) * 2;
     let height = u64::from((lines.len() as f32 * render.scaled_line_height) as u32)
         + padding
-        + u64::from(render.scaled_title_bar_height);
+        + u64::from(header_height);
+    let mut width = u64::from((max_content_width + line_number_width).ceil() as u32) + padding;
+    if config.traffic_lights {
+        width = width.max(u64::from(
+            (TRAFFIC_LIGHT_SPACING * 4.0 * render.render_scale).ceil() as u32,
+        ));
+    }
+    let file_path_header = file_path.map(|text| {
+        let mut x = (f64::from(render.scaled_padding) + line_number_width).round();
+        if config.traffic_lights {
+            // Use the largest corner radius the card height allows while the width is still unknown.
+            let corner_radius = u64::from(render.scaled_border_radius).min(height / 2) as f32;
+            let first_x =
+                first_traffic_light_x(render.render_scale, corner_radius, traffic_light_center_y);
+            let after_lights = first_x
+                + (2.0 * TRAFFIC_LIGHT_SPACING + TRAFFIC_LIGHT_RADIUS + 12.0) * render.render_scale;
+            x = x.max(f64::from(after_lights.ceil()));
+        }
+        let path_width = measure_text_width(text, &font.as_scaled(file_path_scale)).max(1.0);
+        let path_right = (x + path_width).ceil() as u32;
+        width = width.max(u64::from(path_right) + u64::from(render.scaled_padding));
+        FilePathHeader {
+            text,
+            scale: file_path_scale,
+            x: x as u32,
+        }
+    });
     ensure!(
         width > 0 && height > 0,
         "Snapshot width and height must be positive"
@@ -367,8 +409,11 @@ where
 
     Ok(PreparedLayout {
         lines: prepared_lines,
+        file_path_header,
         line_number_width,
         line_number_digits,
+        header_height,
+        traffic_light_center_y,
         width: width as u32,
         height: height as u32,
     })
@@ -381,12 +426,41 @@ fn render_card(
     font: &FontVec,
 ) -> RgbaImage {
     let mut image = ImageBuffer::from_pixel(layout.width, layout.height, render.bg_color);
+    let code_x = f64::from(render.scaled_padding) + layout.line_number_width;
+    if let Some(header) = &layout.file_path_header {
+        if !config.traffic_lights {
+            let divider_x = code_x.round() as u32;
+            let mut tint = render.default_fg;
+            tint[3] /= 3;
+            let mut divider = render.bg_color;
+            divider.blend(&tint);
+            let divider_height = (render.render_scale.round() as u32).max(1);
+            let divider_width = layout.width - divider_x - render.scaled_padding;
+            draw_filled_rect_mut(
+                &mut image,
+                Rect::at(
+                    divider_x as i32,
+                    (layout.header_height - divider_height) as i32,
+                )
+                .of_size(divider_width, divider_height),
+                divider,
+            );
+        }
 
+        draw_text_mut(
+            &mut image,
+            render.default_fg,
+            header.x as i32,
+            ((layout.header_height as f32 - header.scale.y) / 2.0).round() as i32,
+            header.scale,
+            font,
+            header.text,
+        );
+    }
+
+    let code_top = layout.header_height + render.scaled_padding;
     for (line_idx, line) in layout.lines.iter().enumerate() {
-        let y = (render.scaled_padding + render.scaled_title_bar_height) as i32
-            + (line_idx as f32 * render.scaled_line_height) as i32;
-        let mut x = f64::from(render.scaled_padding);
-
+        let y = code_top as i32 + (line_idx as f32 * render.scaled_line_height) as i32;
         if config.line_numbers {
             let number = config.start_line + line_idx;
             let digits = layout.line_number_digits;
@@ -394,15 +468,15 @@ fn render_card(
             draw_text_mut(
                 &mut image,
                 render.line_number_color,
-                x as i32,
+                render.scaled_padding as i32,
                 y,
                 render.scale,
                 font,
                 &line_num,
             );
-            x += layout.line_number_width;
         }
 
+        let mut x = code_x;
         for segment in &line.segments {
             draw_text_mut(
                 &mut image,
@@ -420,17 +494,19 @@ fn render_card(
     image
 }
 
-fn draw_traffic_lights(image: &mut RgbaImage, scale: f32, border_radius: u32) {
-    let spacing = TRAFFIC_LIGHT_SPACING * scale;
-    let radius = 6.0 * scale;
-    let center_y = TITLE_BAR_HEIGHT * scale / 2.0;
-    let corner_radius = border_radius.min(image.width() / 2).min(image.height() / 2) as f32;
-
+fn first_traffic_light_x(scale: f32, corner_radius: f32, center_y: f32) -> f32 {
     // Fit the first dot inside the corner arc when the card has a large radius.
-    let inner_radius = (corner_radius - radius - 1.0).max(0.0);
+    let inner_radius = (corner_radius - TRAFFIC_LIGHT_RADIUS * scale - 1.0).max(0.0);
     let corner_dy = (corner_radius - center_y).max(0.0);
     let corner_dx = (inner_radius.powi(2) - corner_dy.powi(2)).max(0.0).sqrt();
-    let first_center_x = spacing.max(corner_radius - corner_dx);
+    (TRAFFIC_LIGHT_SPACING * scale).max(corner_radius - corner_dx)
+}
+
+fn draw_traffic_lights(image: &mut RgbaImage, scale: f32, border_radius: u32, center_y: f32) {
+    let spacing = TRAFFIC_LIGHT_SPACING * scale;
+    let radius = TRAFFIC_LIGHT_RADIUS * scale;
+    let corner_radius = border_radius.min(image.width() / 2).min(image.height() / 2) as f32;
+    let first_center_x = first_traffic_light_x(scale, corner_radius, center_y);
 
     let top = (center_y - radius).floor() as u32;
     let bottom = (center_y + radius).ceil() as u32;
@@ -451,12 +527,21 @@ fn draw_traffic_lights(image: &mut RgbaImage, scale: f32, border_radius: u32) {
     }
 }
 
-fn apply_card_effects(mut image: RgbaImage, config: &Config, render: &RenderConfig) -> RgbaImage {
-    let scaled_radius = (config.border_radius as f32 * render.render_scale) as u32;
+fn apply_card_effects(
+    mut image: RgbaImage,
+    config: &Config,
+    render: &RenderConfig,
+    traffic_light_center_y: f32,
+) -> RgbaImage {
     if config.traffic_lights {
-        draw_traffic_lights(&mut image, render.render_scale, scaled_radius);
+        draw_traffic_lights(
+            &mut image,
+            render.render_scale,
+            render.scaled_border_radius,
+            traffic_light_center_y,
+        );
     }
-    apply_rounded_corners(&mut image, scaled_radius);
+    apply_rounded_corners(&mut image, render.scaled_border_radius);
     image
 }
 
@@ -599,11 +684,10 @@ fn save_image(image: &RgbaImage, config: &Config) -> Result<PathBuf> {
 fn generate_image(input: Input) -> Result<()> {
     let render = build_render_config(&input.config)?;
     let font = load_font()?;
-    let scaled_font = font.as_scaled(render.scale);
 
-    let layout = measure_layout(&input.lines, &input.config, &render, &scaled_font)?;
+    let layout = measure_layout(&input, &render, &font)?;
     let card = render_card(&layout, &input.config, &render, &font);
-    let card = apply_card_effects(card, &input.config, &render);
+    let card = apply_card_effects(card, &input.config, &render, layout.traffic_light_center_y);
     let image = finalize_output(&card, &input.config, &render);
 
     let saved_path = save_image(&image, &input.config)?;
@@ -669,7 +753,7 @@ mod tests {
         config.traffic_lights = true;
         let render = build_render_config(&config).unwrap();
         let card = RgbaImage::from_pixel(120, 90, render.bg_color);
-        let card = apply_card_effects(card, &config, &render);
+        let card = apply_card_effects(card, &config, &render, 24.0);
 
         assert_eq!(render.scaled_title_bar_height, 48);
         assert_eq!(*card.get_pixel(30, 24), Rgba([255, 95, 87, 255]));

@@ -1,3 +1,4 @@
+use image::GenericImageView;
 use serde_json::{json, Value};
 use std::fs;
 use std::io::Write;
@@ -94,6 +95,88 @@ fn renders_png_with_expected_dimensions_and_colors() {
     assert!(rendered
         .pixels()
         .any(|p| p[0] > 100 && p[1] < 8 && p[2] < 8));
+}
+
+#[test]
+fn renders_file_path_in_a_separate_header_above_numbered_code() {
+    let fixture = Fixture::new();
+    let mut input = json!({
+        "lines": [{ "text": "A", "spans": [] }],
+        "config": {
+            "scale": 1, "font_size": 20, "line_height": 24, "padding": 2,
+            "outer_padding": 0, "border_radius": 0, "shadow": false,
+            "line_numbers": true, "start_line": 42,
+            "background": "#000000", "foreground": "#ffffff",
+            "output_path": "code.png", "clipboard": false,
+        },
+    });
+    let code = image::open(fixture.render(input.clone()))
+        .unwrap()
+        .to_rgba8();
+    input["file_path"] = json!("AAAAAAAAAAAA/AAAA.lua");
+    input["config"]["output_path"] = json!("with-path.png");
+    let with_path = image::open(fixture.render(input)).unwrap().to_rgba8();
+
+    let (width, height) = code.dimensions();
+    let header_height = 32;
+    let divider_y = header_height - 1;
+    assert!(with_path.width() > width);
+    assert_eq!(with_path.height(), height + header_height);
+    let code_bg = code.get_pixel(0, 0);
+    assert_eq!(with_path.get_pixel(0, 0), code_bg);
+    let divider_left = (0..with_path.width())
+        .find(|&x| with_path.get_pixel(x, divider_y) != code_bg)
+        .unwrap();
+    assert!(divider_left > 2);
+    assert_eq!(
+        with_path.get_pixel(with_path.width() - 2, divider_y),
+        code_bg
+    );
+    assert_eq!(with_path.get_pixel(0, divider_y + 1), code_bg);
+    let path_left =
+        image::imageops::crop_imm(&with_path, 0, 0, with_path.width(), header_height - 1)
+            .pixels()
+            .filter_map(|(x, _, p)| (p[0] > 100).then_some(x))
+            .min()
+            .unwrap();
+    let code_left = code
+        .enumerate_pixels()
+        .filter_map(|(x, _, p)| (p[0] > 100).then_some(x))
+        .min()
+        .unwrap();
+    assert!(path_left.abs_diff(divider_left) <= 1);
+    assert!(code_left.abs_diff(divider_left) <= 1);
+    assert_eq!(
+        image::imageops::crop_imm(&with_path, 0, divider_y + 1, width, height).to_image(),
+        code,
+    );
+}
+
+#[test]
+fn renders_file_path_beside_the_traffic_lights_in_one_row() {
+    let fixture = Fixture::new();
+    let path = fixture.render(json!({
+        "lines": [{ "text": "A", "spans": [] }],
+        "file_path": "/AAAA/AAAA.lua",
+        "config": {
+            "scale": 1, "font_size": 20, "line_height": 24, "padding": 2,
+            "outer_padding": 0, "border_radius": 0, "shadow": false,
+            "traffic_lights": true, "background": "#000000", "foreground": "#ffffff",
+            "output_path": "header.png", "clipboard": false,
+        },
+    }));
+    let rendered = image::open(path).unwrap().to_rgba8();
+
+    assert_eq!(rendered.height(), 32 + 24 + 4);
+    assert_eq!(*rendered.get_pixel(60, 16), image::Rgba([40, 200, 64, 255]));
+    assert!(rendered.enumerate_pixels().any(|(x, y, p)| {
+        x >= 78 && (10..22).contains(&y) && p[0] > 100 && p[0] == p[1] && p[1] == p[2]
+    }));
+    assert!(rendered
+        .rows()
+        .nth(31)
+        .unwrap()
+        .all(|pixel| pixel.0 == [0, 0, 0, 255]));
 }
 
 #[test]

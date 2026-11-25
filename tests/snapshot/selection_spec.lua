@@ -57,8 +57,13 @@ end
 vim.api.nvim_buf_set_lines(0, 0, -1, false, { "first", "aéX", "last" })
 vim.cmd.runtime("plugin/snapshot.lua")
 
+vim.cmd('Snapshot {"show_file_path":true}')
+assert(payload.file_path == nil, "An unnamed buffer has no file path")
+vim.api.nvim_buf_set_name(0, vim.fn.tempname() .. " source.lua")
+
 vim.api.nvim_win_set_cursor(0, { 2, 1 })
-local keys = vim.api.nvim_replace_termcodes('v:Snapshot {"line_numbers":true}<CR>', true, false, true)
+local keys =
+  vim.api.nvim_replace_termcodes('v:Snapshot {"line_numbers":true,"show_file_path":true}<CR>', true, false, true)
 vim.api.nvim_feedkeys(keys, "nx", false)
 assert(
   vim.deep_equal(payload.lines, {
@@ -67,10 +72,12 @@ assert(
   vim.inspect(payload)
 )
 assert(payload.config.start_line == 2, vim.inspect(payload))
+assert(payload.file_path == vim.api.nvim_buf_get_name(0), vim.inspect(payload))
 
 vim.cmd("2,2Snapshot")
 assert(#payload.lines == 1 and payload.lines[1].text == "aéX", vim.inspect(payload))
 assert(payload.config.start_line == 2, vim.inspect(payload))
+assert(payload.file_path == nil, "File paths are hidden by default")
 
 vim.cmd("Snapshot")
 assert(#payload.lines == 3 and payload.config.start_line == 1, vim.inspect(payload))

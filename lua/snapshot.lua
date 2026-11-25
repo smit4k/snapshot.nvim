@@ -34,6 +34,7 @@ end
 ---@field clipboard boolean? Enable saving snapshot to clipboard
 ---@field shadow boolean? Enable shadow effect (default: true)
 ---@field traffic_lights boolean? Show macOS-style window controls above the code (default: false)
+---@field show_file_path boolean? Show the captured buffer's absolute file path in a header (default: false)
 ---@field line_numbers boolean? Show line numbers (default: false)
 ---@field start_line number? Starting line number (default: first captured line)
 ---@field border_radius number? Corner radius in pixels (default: 5)
@@ -47,6 +48,7 @@ local config = {
   clipboard = true,
   shadow = true,
   traffic_lights = false,
+  show_file_path = false,
   line_numbers = false,
   border_radius = 5,
   outer_background = "#ffffff",
@@ -58,7 +60,7 @@ local M = {}
 ---@type Config
 M.config = config
 
-local VERSION = "v0.1.6"
+local VERSION = "v0.1.7"
 local FONT_NAME = "JetBrainsMono-Regular.ttf"
 
 --- Read the installed version from the .version file in the release directory.
@@ -352,6 +354,12 @@ M.snapshot = function(opts, range)
     lines = buffer_json,
     config = final_config,
   }
+  if final_config.show_file_path and vim.bo[bufnr].buftype == "" then
+    local file_path = vim.api.nvim_buf_get_name(bufnr)
+    if file_path ~= "" then
+      payload.file_path = vim.fn.strtrans(file_path)
+    end
+  end
 
   local json_string = vim.fn.json_encode(payload)
 

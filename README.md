@@ -32,6 +32,7 @@ return {
         --font_size = 24,
         --shadow = true,
         --traffic_lights = false, -- set to true for macOS-style window controls
+        --show_file_path = false, -- show the buffer's absolute file path in a header
         --line_numbers = false,
         --start_line = 1, -- override the first captured line number
         --border_radius = 5,
@@ -47,6 +48,10 @@ return {
 
 Select code in Visual mode and run `:Snapshot`.
 To capture an entire buffer, run `:Snapshot` in Normal mode. An explicit line range, such as `:5,10Snapshot`, captures those full lines.
+
+Set `show_file_path = true` in setup or run `:Snapshot {"show_file_path":true}` to show the absolute file path in a separate header above the code for a named file buffer.
+When `traffic_lights` is enabled, the file path appears to the right of the controls in that header.
+With `traffic_lights` disabled, a divider separates the path from the code.
 
 Use `snapshot_dir` to choose the directory for timestamped PNGs. Set `output_path` to an explicit image file, an existing directory, or a new directory marked by a trailing slash. JPEG output flattens transparency onto white.
 
