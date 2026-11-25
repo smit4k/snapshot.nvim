@@ -28,7 +28,7 @@ end
 ---@field shadow boolean? Enable shadow effect (default: true)
 ---@field traffic_lights boolean? Show macOS-style window controls above the code (default: false)
 ---@field line_numbers boolean? Show line numbers (default: false)
----@field start_line number? Starting line number (default: 1)
+---@field start_line number? Starting line number (default: first captured line)
 ---@field border_radius number? Corner radius in pixels (default: 5)
 ---@field outer_background string? Background color outside the code card in hex format (default: "#ffffff")
 ---@field outer_padding number? Padding between the code card and outer background edge in pixels (default: 40)
@@ -41,7 +41,6 @@ local config = {
   shadow = true,
   traffic_lights = false,
   line_numbers = false,
-  start_line = 1,
   border_radius = 5,
   outer_background = "#ffffff",
   outer_padding = 15,
@@ -217,39 +216,74 @@ M.capture_highlights = function(bufnr)
   return extmarks
 end
 
--- Generate a snapshot image from the current buffer or visual selection
----@param opts table? Optional configuration overrides
-M.snapshot = function(opts)
-  opts = opts or {}
-  local bufnr = vim.api.nvim_get_current_buf()
-
-  -- Check if we have a visual selection by checking the marks
-  local start_pos = vim.fn.getpos("'<")
-  local end_pos = vim.fn.getpos("'>")
-  local lines
-  local start_line_num = 1
-
-  -- If the visual marks are valid and different, use them
-  if start_pos[2] > 0 and end_pos[2] > 0 and start_pos[2] <= end_pos[2] then
-    start_line_num = start_pos[2]
-    lines = vim.api.nvim_buf_get_lines(bufnr, start_pos[2] - 1, end_pos[2], false)
-
-    -- Handle character-wise visual selection
-    -- If it's a single line and columns are specified
-    if #lines == 1 and start_pos[3] > 0 and end_pos[3] > 0 then
-      lines[1] = string.sub(lines[1], start_pos[3], end_pos[3])
-    elseif #lines > 1 and start_pos[3] > 0 and end_pos[3] > 0 then
-      -- Multi-line character-wise selection
-      lines[1] = string.sub(lines[1], start_pos[3])
-      lines[#lines] = string.sub(lines[#lines], 1, end_pos[3])
+local function crop_visual_lines(lines, first, last, mode)
+  local exclusive = vim.o.selection == "exclusive"
+  local left_col, right_col
+  if mode == "\22" then
+    local first_col, last_col = vim.fn.virtcol("'<"), vim.fn.virtcol("'>")
+    left_col, right_col = math.min(first_col, last_col), math.max(first_col, last_col)
+    if exclusive and left_col < right_col then
+      right_col = right_col - 1
     end
-  else
-    -- No valid visual selection, capture the entire buffer
-    lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
   end
 
-  -- Build the JSON payload
+  for i, line in ipairs(lines) do
+    local start_col, end_col = 0, #line.text
+    if mode == "v" then
+      if i == 1 then
+        start_col = first[3] - 1
+      end
+      if i == #lines then
+        local last_col = last[3]
+        if exclusive and (first[2] ~= last[2] or first[3] ~= last_col) then
+          end_col = last_col - 1
+        elseif last_col <= #line.text then
+          end_col = last_col + vim.str_utf_end(line.text, last_col)
+        end
+      end
+    elseif mode == "\22" then
+      -- shortcut: a selected cell within a tab or wide glyph keeps that glyph, until the renderer supports partial cells.
+      local row = first[2] + i - 1
+      if left_col > vim.fn.strdisplaywidth(line.text) then
+        start_col, end_col = #line.text, #line.text
+      else
+        start_col = vim.fn.virtcol2col(0, row, left_col) - 1
+        local last_col = vim.fn.virtcol2col(0, row, right_col)
+        end_col = last_col + vim.str_utf_end(line.text, last_col)
+      end
+    end
+
+    line.text = line.text:sub(start_col + 1, end_col)
+    local spans = {}
+    for _, span in ipairs(line.spans) do
+      local start = math.max(span.start, start_col)
+      local finish = math.min(span["end"], end_col)
+      if start < finish then
+        span.start = start - start_col
+        span["end"] = finish - start_col
+        spans[#spans + 1] = span
+      end
+    end
+    line.spans = spans
+  end
+end
+
+--- Generate a snapshot image from the current buffer or a command range.
+---@param opts table? Optional configuration overrides
+---@param range table? Command line range and optional Visual selection
+M.snapshot = function(opts, range)
+  opts = opts or {}
+  local bufnr = vim.api.nvim_get_current_buf()
+  local start_line_num = range and range.line1 or 1
+  local lines = vim.api.nvim_buf_get_lines(bufnr, start_line_num - 1, range and range.line2 or -1, false)
   local buffer_json = require("snapshot.json").build_snapshot_json(bufnr, lines, start_line_num - 1)
+  if range and range.visual then
+    local mode = vim.fn.visualmode()
+    local first, last = vim.fn.getpos("'<"), vim.fn.getpos("'>")
+    if first[2] == range.line1 and last[2] == range.line2 and (mode == "v" or mode == "\22") then
+      crop_visual_lines(buffer_json, first, last, mode)
+    end
+  end
 
   -- Merge config with opts
   local final_config = vim.tbl_deep_extend("force", M.config, opts)

@@ -33,7 +33,7 @@ return {
         --shadow = true,
         --traffic_lights = false, -- set to true for macOS-style window controls
         --line_numbers = false,
-        --start_line = 1,
+        --start_line = 1, -- override the first captured line number
         --border_radius = 5,
         --outer_background = "#ffffff", -- use #00000000 for transparent
         --outer_padding = 15,
@@ -46,7 +46,7 @@ return {
 ## Usage
 
 Select code in Visual mode and run `:Snapshot`.
-To capture an entire buffer, just run `:Snapshot` in Normal mode.
+To capture an entire buffer, run `:Snapshot` in Normal mode. An explicit line range, such as `:5,10Snapshot`, captures those full lines.
 
 ## Contributing
 
