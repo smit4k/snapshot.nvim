@@ -81,6 +81,29 @@ assert(payload.config.start_line == 99, vim.inspect(payload))
 assert(snapshot.snapshot() == saved_path, "Snapshot must preserve spaces in its output path")
 assert(warnings[#warnings] == "Clipboard unavailable", "Generator warnings must remain separate from stdout")
 
+snapshot_json.build_snapshot_json = build_snapshot_json
+vim.bo.tabstop = 4
+vim.api.nvim_set_hl(0, "SnapshotTabTest", { fg = 0x123456 })
+vim.cmd("syntax match SnapshotTabTest /X/")
+local tabbed = { "\t\tcallback()", "é\tX" }
+vim.api.nvim_buf_set_lines(0, 0, -1, false, tabbed)
+vim.cmd("Snapshot")
+assert(payload.lines[1].text == "        callback()", vim.inspect(payload.lines[1]))
+assert(payload.lines[2].text == "é   X", vim.inspect(payload.lines[2]))
+local span = payload.lines[2].spans[1]
+assert(span.start == 5 and span["end"] == 6 and span.fg == "#123456", vim.inspect(span))
+assert(vim.deep_equal(vim.api.nvim_buf_get_lines(0, 0, -1, false), tabbed), "Snapshot must preserve tabs in the buffer")
+
+vim.api.nvim_win_set_cursor(0, { 2, 2 })
+vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes("vl:Snapshot<CR>", true, false, true), "nx", false)
+assert(#payload.lines == 1 and payload.lines[1].text == "   X", vim.inspect(payload.lines))
+span = payload.lines[1].spans[1]
+assert(span.start == 3 and span["end"] == 4, vim.inspect(span))
+
+vim.bo.vartabstop = "2,3"
+vim.cmd("1Snapshot")
+assert(payload.lines[1].text == "     callback()", vim.inspect(payload.lines[1]))
+
 payload = nil
 local message
 vim.notify = function(output)
@@ -94,4 +117,3 @@ vim.fn.executable = executable
 for name, fn in pairs(original) do
   vim.fn[name] = fn
 end
-snapshot_json.build_snapshot_json = build_snapshot_json

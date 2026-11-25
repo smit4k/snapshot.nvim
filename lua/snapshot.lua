@@ -58,7 +58,7 @@ local M = {}
 ---@type Config
 M.config = config
 
-local VERSION = "v0.1.5"
+local VERSION = "v0.1.6"
 local FONT_NAME = "JetBrainsMono-Regular.ttf"
 
 --- Read the installed version from the .version file in the release directory.
@@ -223,8 +223,42 @@ M.capture_highlights = function(bufnr)
   return extmarks
 end
 
+local function expand_tabs(line, display_col)
+  local text = line.text
+  if not text:find("\t", 1, true) then
+    return
+  end
+
+  local tabs = {}
+  local next_byte = 1
+  -- Tab widths use display columns, while highlight boundaries use UTF-8 bytes.
+  line.text = text:gsub("()\t", function(byte)
+    display_col = display_col + vim.fn.strdisplaywidth(text:sub(next_byte, byte - 1), display_col)
+    local width = vim.fn.strdisplaywidth("\t", display_col)
+    tabs[#tabs + 1] = { byte = byte, extra = width - 1 }
+    display_col = display_col + width
+    next_byte = byte + 1
+    return string.rep(" ", width)
+  end)
+
+  local tab_index, extra = 1, 0
+  local function expanded_offset(offset)
+    while tabs[tab_index] and tabs[tab_index].byte <= offset do
+      extra = extra + tabs[tab_index].extra
+      tab_index = tab_index + 1
+    end
+    return offset + extra
+  end
+
+  for _, span in ipairs(line.spans) do
+    span.start = expanded_offset(span.start)
+    span["end"] = expanded_offset(span["end"])
+  end
+end
+
 local function crop_visual_lines(lines, first, last, mode)
   local exclusive = vim.o.selection == "exclusive"
+  local start_columns = {}
   local left_col, right_col
   if mode == "\22" then
     local first_col, last_col = vim.fn.virtcol("'<"), vim.fn.virtcol("'>")
@@ -260,6 +294,9 @@ local function crop_visual_lines(lines, first, last, mode)
       end
     end
 
+    if start_col > 0 then
+      start_columns[i] = vim.fn.strdisplaywidth(line.text:sub(1, start_col))
+    end
     line.text = line.text:sub(start_col + 1, end_col)
     local spans = {}
     for _, span in ipairs(line.spans) do
@@ -273,6 +310,7 @@ local function crop_visual_lines(lines, first, last, mode)
     end
     line.spans = spans
   end
+  return start_columns
 end
 
 --- Generate a snapshot image from the current buffer or a command range.
@@ -284,12 +322,16 @@ M.snapshot = function(opts, range)
   local start_line_num = range and range.line1 or 1
   local lines = vim.api.nvim_buf_get_lines(bufnr, start_line_num - 1, range and range.line2 or -1, false)
   local buffer_json = require("snapshot.json").build_snapshot_json(bufnr, lines, start_line_num - 1)
+  local start_columns
   if range and range.visual then
     local mode = vim.fn.visualmode()
     local first, last = vim.fn.getpos("'<"), vim.fn.getpos("'>")
     if first[2] == range.line1 and last[2] == range.line2 and (mode == "v" or mode == "\22") then
-      crop_visual_lines(buffer_json, first, last, mode)
+      start_columns = crop_visual_lines(buffer_json, first, last, mode)
     end
+  end
+  for i, line in ipairs(buffer_json) do
+    expand_tabs(line, start_columns and start_columns[i] or 0)
   end
 
   -- Merge config with opts
