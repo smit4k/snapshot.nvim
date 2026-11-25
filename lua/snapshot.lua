@@ -1,9 +1,16 @@
--- main module file
-local module = require("snapshot.module")
 local highlights = require("snapshot.highlights")
 
 local is_windows = vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1
 local generator_bin = is_windows and "snapshot-generator.exe" or "snapshot-generator"
+local plugin_root = vim.fn.fnamemodify(debug.getinfo(1, "S").source:sub(2), ":p:h:h")
+local target_dir = plugin_root .. "/generator/target"
+local release_dir = target_dir .. "/release/"
+local generator_path = release_dir .. generator_bin
+local generator_manifest = plugin_root .. "/generator/Cargo.toml"
+local build_command = "cargo build --release --manifest-path "
+  .. vim.fn.shellescape(generator_manifest)
+  .. " --target-dir "
+  .. vim.fn.shellescape(target_dir)
 
 --- Resolve the Normal highlight group to get the editor's background and foreground colors.
 --- Falls back to sensible defaults if the highlight group is not set.
@@ -19,9 +26,9 @@ end
 ---@field snapshot_dir string? Directory to save snapshots (defaults to $HOME)
 ---@field output_path string? Image file path or a directory for a generated PNG
 ---@field scale number? Resolution scale factor for HiDPI/Retina rendering (default: 2)
----@field padding number? Padding around the code (default: 80)
+---@field padding number? Padding around the code (default: 25)
 ---@field line_height number? Height of each line in pixels (default: 28)
----@field font_size number? Font size in pixels (default: 20)
+---@field font_size number? Font size in pixels (default: 24)
 ---@field background string? Background color in hex format (default: from Normal highlight group)
 ---@field foreground string? Default text color in hex format (default: from Normal highlight group)
 ---@field clipboard boolean? Enable saving snapshot to clipboard
@@ -31,7 +38,7 @@ end
 ---@field start_line number? Starting line number (default: first captured line)
 ---@field border_radius number? Corner radius in pixels (default: 5)
 ---@field outer_background string? Background color outside the code card in hex format (default: "#ffffff")
----@field outer_padding number? Padding between the code card and outer background edge in pixels (default: 40)
+---@field outer_padding number? Padding between the code card and outer background edge in pixels (default: 15)
 local config = {
   scale = 2,
   padding = 25,
@@ -46,7 +53,6 @@ local config = {
   outer_padding = 15,
 }
 
----@class MyModule
 local M = {}
 
 ---@type Config
@@ -57,8 +63,8 @@ local FONT_NAME = "JetBrainsMono-Regular.ttf"
 
 --- Read the installed version from the .version file in the release directory.
 --- Returns nil if the file doesn't exist or can't be read.
-local function read_installed_version(plugin_root)
-  local version_file = plugin_root .. "/generator/target/release/.version"
+local function read_installed_version()
+  local version_file = release_dir .. ".version"
   local f = io.open(version_file, "r")
   if not f then
     return nil
@@ -68,31 +74,23 @@ local function read_installed_version(plugin_root)
   return version
 end
 
--- you can define your setup function here. Usually configurations can be merged, accepting outside params and
--- you can also put some validation here for those.
+---@param args Config?
 M.setup = function(args)
   M.config = vim.tbl_deep_extend("force", M.config, args or {})
 
-  -- Auto-install or update the generator and its font if needed
-  local rtp = vim.api.nvim_list_runtime_paths()
-  for _, path in ipairs(rtp) do
-    if path:match("snapshot%.nvim") or path:match("snapshot$") then
-      local release_dir = path .. "/generator/target/release/"
-      if vim.fn.executable(release_dir .. generator_bin) ~= 1 or vim.fn.getfsize(release_dir .. FONT_NAME) <= 0 then
-        vim.notify("snapshot.nvim: binary or font not found, installing...", vim.log.levels.INFO)
-        M.install()
-      else
-        local installed_version = read_installed_version(path)
-        if installed_version ~= VERSION then
-          vim.notify(
-            "snapshot.nvim: updating binary from " .. (installed_version or "unknown") .. " to " .. VERSION .. "...",
-            vim.log.levels.INFO
-          )
-          M.install()
-        end
-      end
-      break
-    end
+  if vim.fn.executable(generator_path) ~= 1 or vim.fn.getfsize(release_dir .. FONT_NAME) <= 0 then
+    vim.notify("snapshot.nvim: binary or font not found, installing...", vim.log.levels.INFO)
+    M.install()
+    return
+  end
+
+  local installed_version = read_installed_version()
+  if installed_version ~= VERSION then
+    vim.notify(
+      "snapshot.nvim: updating binary from " .. (installed_version or "unknown") .. " to " .. VERSION .. "...",
+      vim.log.levels.INFO
+    )
+    M.install()
   end
 end
 
@@ -120,25 +118,8 @@ M.install = function()
     return false
   end
 
-  -- Find plugin root path
-  local plugin_root = nil
-  local rtp = vim.api.nvim_list_runtime_paths()
-  for _, path in ipairs(rtp) do
-    if path:match("snapshot%.nvim") or path:match("snapshot$") then
-      plugin_root = path
-      break
-    end
-  end
-
-  if not plugin_root then
-    vim.notify("Could not find snapshot.nvim plugin path", vim.log.levels.ERROR)
-    return false
-  end
-
-  local generator_dir = plugin_root .. "/generator/"
-  local target_dir = generator_dir .. "target"
-  local dest_dir = target_dir .. "/release/"
-  local dest = dest_dir .. generator_bin
+  local dest_dir = release_dir
+  local dest = generator_path
   vim.fn.mkdir(dest_dir, "p")
 
   local url = "https://github.com/smit4k/snapshot.nvim/releases/download/" .. VERSION .. "/" .. filename
@@ -157,7 +138,7 @@ M.install = function()
       "build",
       "--release",
       "--manifest-path",
-      generator_dir .. "Cargo.toml",
+      generator_manifest,
       "--target-dir",
       target_dir,
     })
@@ -222,8 +203,17 @@ M.install = function()
   return true
 end
 
-M.hello = function()
-  return module.my_first_function(M.config.opt)
+M.debug = function()
+  print("=== Snapshot Debug Info ===")
+  print("Platform: " .. (is_windows and "Windows" or "Unix"))
+  print("Plugin path: " .. plugin_root)
+  if vim.fn.executable(generator_path) == 1 then
+    print("Generator found: " .. generator_path)
+    print(string.format("Size: %.1f MB", vim.fn.getfsize(generator_path) / 1024 / 1024))
+  else
+    print("Generator not found: " .. generator_path)
+    print("Run: " .. build_command)
+  end
 end
 
 M.capture_highlights = function(bufnr)
@@ -322,54 +312,8 @@ M.snapshot = function(opts, range)
 
   local json_string = vim.fn.json_encode(payload)
 
-  -- Find the generator binary using multiple methods for reliability
-  local generator_path
-
-  -- Method 1: Try to find via the loaded module path
-  local snapshot_module = package.loaded["snapshot"]
-  if snapshot_module and snapshot_module.__file then
-    local module_path = snapshot_module.__file
-    local plugin_root = vim.fn.fnamemodify(module_path, ":h:h")
-    generator_path = plugin_root .. "/generator/target/release/" .. generator_bin
-  end
-
-  -- Method 2: Use runtimepath to find the plugin
-  if not generator_path or vim.fn.executable(generator_path) ~= 1 then
-    local rtp = vim.api.nvim_list_runtime_paths()
-    for _, path in ipairs(rtp) do
-      if path:match("snapshot%.nvim") or path:match("snapshot$") then
-        local test_path = path .. "/generator/target/release/" .. generator_bin
-        if vim.fn.executable(test_path) == 1 then
-          generator_path = test_path
-          break
-        end
-      end
-    end
-  end
-
-  -- Check if the generator exists
-  if not generator_path or vim.fn.executable(generator_path) ~= 1 then
-    -- Try to provide helpful error message with correct path
-    local rtp = vim.api.nvim_list_runtime_paths()
-    local plugin_path = nil
-    for _, path in ipairs(rtp) do
-      if path:match("snapshot%.nvim") or path:match("snapshot$") then
-        plugin_path = path
-        break
-      end
-    end
-
-    if plugin_path then
-      vim.notify(
-        "Snapshot generator not found. Please run:\ncd " .. plugin_path .. "/generator && cargo build --release",
-        vim.log.levels.ERROR
-      )
-    else
-      vim.notify(
-        "Snapshot generator not found and plugin path could not be determined.\nPlease build the generator manually.",
-        vim.log.levels.ERROR
-      )
-    end
+  if vim.fn.executable(generator_path) ~= 1 then
+    vim.notify("Snapshot generator not found. Please run:\n" .. build_command, vim.log.levels.ERROR)
     return nil
   end
 

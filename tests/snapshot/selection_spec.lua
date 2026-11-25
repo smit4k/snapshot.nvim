@@ -15,7 +15,6 @@ local warnings = {}
 vim.fn.executable = function()
   return 1
 end
-snapshot.__file = "lua/snapshot.lua"
 vim.fn.jobstart = function(_, options)
   callbacks = options
   return 1
@@ -95,5 +94,4 @@ vim.fn.executable = executable
 for name, fn in pairs(original) do
   vim.fn[name] = fn
 end
-snapshot.__file = nil
 snapshot_json.build_snapshot_json = build_snapshot_json

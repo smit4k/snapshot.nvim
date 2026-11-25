@@ -41,42 +41,4 @@ vim.api.nvim_create_user_command("Snapshot", function(opts)
   snapshot.snapshot(config_override, range)
 end, { range = true, nargs = "?" })
 
--- Debug command to check paths and installation
-vim.api.nvim_create_user_command("SnapshotDebug", function(opts)
-  local is_windows = vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1
-  local bin_name = is_windows and "snapshot-generator.exe" or "snapshot-generator"
-
-  print("=== Snapshot Debug Info ===")
-  print("Platform: " .. (is_windows and "Windows" or "Unix"))
-  print("opts.args type: " .. type(opts.args))
-  print("opts.args value: " .. vim.inspect(opts.args))
-  print("")
-
-  -- Check runtime paths
-  print("Checking runtime paths for snapshot.nvim...")
-  local rtp = vim.api.nvim_list_runtime_paths()
-  local found_plugin = false
-  for _, path in ipairs(rtp) do
-    if path:match("snapshot%.nvim") or path:match("snapshot$") then
-      found_plugin = true
-      print("✓ Plugin path: " .. path)
-
-      local gen_path = path .. "/generator/target/release/" .. bin_name
-      if vim.fn.executable(gen_path) == 1 then
-        print("✓ Generator found: " .. gen_path)
-        local size = vim.fn.getfsize(gen_path)
-        print("  Size: " .. string.format("%.1f MB", size / 1024 / 1024))
-      else
-        print("✗ Generator NOT found: " .. gen_path)
-        print("  Run: cd " .. path .. "/generator && cargo build --release")
-      end
-    end
-  end
-
-  if not found_plugin then
-    print("✗ snapshot.nvim not found in runtimepath")
-  end
-
-  print("")
-  print("Module location: " .. debug.getinfo(1, "S").source)
-end, { nargs = "?" })
+vim.api.nvim_create_user_command("SnapshotDebug", snapshot.debug, { nargs = "?" })

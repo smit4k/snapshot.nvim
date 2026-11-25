@@ -8,12 +8,8 @@ local version = release_dir .. ".version"
 vim.fn.mkdir(root .. "/lua", "p")
 vim.fn.writefile(vim.fn.readfile("lua/snapshot.lua"), root .. "/lua/snapshot.lua")
 local snapshot = dofile(root .. "/lua/snapshot.lua")
-local list_runtime_paths = vim.api.nvim_list_runtime_paths
 local executable = vim.fn.executable
 local system = vim.fn.system
-vim.api.nvim_list_runtime_paths = function()
-  return { root }
-end
 vim.fn.executable = function(path)
   return vim.fn.filereadable(path)
 end
@@ -53,7 +49,6 @@ local ok, failure = pcall(function()
   assert(cargo_calls == 3 and vim.fn.filereadable(font) == 1, "Setup must repair a missing font")
 end)
 
-vim.api.nvim_list_runtime_paths = list_runtime_paths
 vim.fn.executable = executable
 vim.fn.system = system
 vim.fn.delete(vim.fn.fnamemodify(root, ":h"), "rf")
