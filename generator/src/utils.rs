@@ -35,17 +35,14 @@ pub fn hex_to_rgba(hex: &str) -> Rgba<u8> {
     try_hex_to_rgba(hex).unwrap_or(HEX_FALLBACK)
 }
 
-pub fn measure_text_width<F, SF>(text: &str, font: &SF) -> u32
+pub fn measure_text_width<F, SF>(text: &str, font: &SF) -> f64
 where
     F: Font,
     SF: ScaleFont<F>,
 {
-    let width = text.chars().fold(0.0, |acc, c| {
-        let glyph_id = font.glyph_id(c);
-        acc + font.h_advance(glyph_id)
-    });
-
-    width.ceil() as u32
+    text.chars()
+        .map(|c| f64::from(font.h_advance(font.glyph_id(c))))
+        .sum()
 }
 
 pub fn apply_rounded_corners(img: &mut RgbaImage, radius: u32) {

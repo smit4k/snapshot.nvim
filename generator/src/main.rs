@@ -134,16 +134,28 @@ struct RenderConfig {
     line_number_color: Rgba<u8>,
 }
 
-struct PreparedSegment {
-    start: usize,
-    end: usize,
-    width: u32,
+struct PreparedSegment<'a> {
+    text: &'a str,
+    width: f64,
     color: Rgba<u8>,
 }
 
-struct PreparedLine {
+struct PreparedLine<'a> {
+    segments: Vec<PreparedSegment<'a>>,
+}
+
+impl PreparedLine<'_> {
+    fn width(&self) -> f64 {
+        self.segments.iter().map(|segment| segment.width).sum()
+    }
+}
+
+struct PreparedLayout<'a> {
+    lines: Vec<PreparedLine<'a>>,
+    line_number_width: f64,
+    line_number_digits: usize,
     width: u32,
-    segments: Vec<PreparedSegment>,
+    height: u32,
 }
 
 fn render_scale(scale: f32) -> f32 {
@@ -218,31 +230,24 @@ fn normalize_span_range(
     }
 }
 
-fn push_segment<F, SF>(
-    segments: &mut Vec<PreparedSegment>,
-    text: &str,
-    start: usize,
-    end: usize,
+fn push_segment<'a, F, SF>(
+    segments: &mut Vec<PreparedSegment<'a>>,
+    text: &'a str,
     color: Rgba<u8>,
     scaled_font: &SF,
 ) where
     F: Font,
     SF: ab_glyph::ScaleFont<F>,
 {
-    if start >= end {
-        return;
-    }
-
-    let width = measure_text_width(&text[start..end], scaled_font);
-    segments.push(PreparedSegment {
-        start,
-        end,
-        width,
-        color,
-    });
+    let width = measure_text_width(text, scaled_font);
+    segments.push(PreparedSegment { text, width, color });
 }
 
-fn prepare_line<F, SF>(line: &Line, scaled_font: &SF, default_fg: Rgba<u8>) -> PreparedLine
+fn prepare_line<'a, F, SF>(
+    line: &'a Line,
+    scaled_font: &SF,
+    default_fg: Rgba<u8>,
+) -> PreparedLine<'a>
 where
     F: Font,
     SF: ab_glyph::ScaleFont<F>,
@@ -259,54 +264,35 @@ where
         if last_end < start {
             push_segment(
                 &mut segments,
-                &line.text,
-                last_end,
-                start,
+                &line.text[last_end..start],
                 default_fg,
                 scaled_font,
             );
         }
 
         let color = span.fg.as_deref().map(hex_to_rgba).unwrap_or(default_fg);
-        push_segment(&mut segments, &line.text, start, end, color, scaled_font);
+        push_segment(&mut segments, &line.text[start..end], color, scaled_font);
         last_end = end;
     }
 
     if last_end < line.text.len() {
         push_segment(
             &mut segments,
-            &line.text,
-            last_end,
-            line.text.len(),
+            &line.text[last_end..],
             default_fg,
             scaled_font,
         );
     }
 
-    let width = segments.iter().map(|segment| segment.width).sum();
-    PreparedLine { width, segments }
+    PreparedLine { segments }
 }
 
-fn line_number_width<F, SF>(config: &Config, lines: &[Line], scaled_font: &SF) -> u32
-where
-    F: Font,
-    SF: ab_glyph::ScaleFont<F>,
-{
-    if !config.line_numbers {
-        return 0;
-    }
-
-    let max_line_num = config.start_line + lines.len();
-    let line_num = format!("{max_line_num:>4}  ");
-    measure_text_width(&line_num, scaled_font)
-}
-
-fn measure_layout<F, SF>(
-    lines: &[Line],
+fn measure_layout<'a, F, SF>(
+    lines: &'a [Line],
     config: &Config,
     render: &RenderConfig,
     scaled_font: &SF,
-) -> (Vec<PreparedLine>, u32, u32, u32)
+) -> PreparedLayout<'a>
 where
     F: Font,
     SF: ab_glyph::ScaleFont<F>,
@@ -316,14 +302,23 @@ where
         .map(|line| prepare_line(line, scaled_font, render.default_fg))
         .collect();
 
-    let line_number_width = line_number_width(config, lines, scaled_font);
+    let (line_number_digits, line_number_width) = if config.line_numbers {
+        let last = config
+            .start_line
+            .saturating_add(lines.len().saturating_sub(1));
+        let digits = last.to_string().len().max(4);
+        let label = format!("{last:>digits$}  ");
+        (digits, measure_text_width(&label, scaled_font))
+    } else {
+        (0, 0.0)
+    };
     let max_content_width = prepared_lines
         .iter()
-        .map(|line| line.width)
-        .max()
-        .unwrap_or((800.0 * render.render_scale) as u32);
+        .map(PreparedLine::width)
+        .max_by(f64::total_cmp)
+        .unwrap_or_else(|| 800.0 * f64::from(render.render_scale));
 
-    let width = max_content_width + line_number_width + render.scaled_padding * 2;
+    let width = (max_content_width + line_number_width).ceil() as u32 + render.scaled_padding * 2;
     let width = if config.traffic_lights {
         width.max((TRAFFIC_LIGHT_SPACING * 4.0 * render.render_scale).ceil() as u32)
     } else {
@@ -333,28 +328,32 @@ where
         + render.scaled_padding * 2
         + render.scaled_title_bar_height;
 
-    (prepared_lines, line_number_width, width, height)
+    PreparedLayout {
+        lines: prepared_lines,
+        line_number_width,
+        line_number_digits,
+        width,
+        height,
+    }
 }
 
 fn render_card(
-    lines: &[Line],
-    prepared_lines: &[PreparedLine],
+    layout: &PreparedLayout<'_>,
     config: &Config,
     render: &RenderConfig,
     font: &FontVec,
-    line_number_width: u32,
-    width: u32,
-    height: u32,
 ) -> RgbaImage {
-    let mut image: RgbaImage = ImageBuffer::from_pixel(width, height, render.bg_color);
+    let mut image = ImageBuffer::from_pixel(layout.width, layout.height, render.bg_color);
 
-    for (line_idx, (line, prepared)) in lines.iter().zip(prepared_lines).enumerate() {
+    for (line_idx, line) in layout.lines.iter().enumerate() {
         let y = (render.scaled_padding + render.scaled_title_bar_height) as i32
             + (line_idx as f32 * render.scaled_line_height) as i32;
-        let mut x = render.scaled_padding as f32;
+        let mut x = f64::from(render.scaled_padding);
 
         if config.line_numbers {
-            let line_num = format!("{:>4}  ", config.start_line + line_idx);
+            let number = config.start_line.saturating_add(line_idx);
+            let digits = layout.line_number_digits;
+            let line_num = format!("{number:>digits$}  ");
             draw_text_mut(
                 &mut image,
                 render.line_number_color,
@@ -364,21 +363,20 @@ fn render_card(
                 font,
                 &line_num,
             );
-            x += line_number_width as f32;
+            x += layout.line_number_width;
         }
 
-        for segment in &prepared.segments {
-            let text = &line.text[segment.start..segment.end];
+        for segment in &line.segments {
             draw_text_mut(
                 &mut image,
                 segment.color,
-                x as i32,
+                x.round() as i32,
                 y,
                 render.scale,
                 font,
-                text,
+                segment.text,
             );
-            x += segment.width as f32;
+            x += segment.width;
         }
     }
 
@@ -566,18 +564,8 @@ fn generate_image(input: Input) -> Result<()> {
     let render = build_render_config(&input.config);
     let scaled_font = font.as_scaled(render.scale);
 
-    let (prepared_lines, line_number_width, width, height) =
-        measure_layout(&input.lines, &input.config, &render, &scaled_font);
-    let card = render_card(
-        &input.lines,
-        &prepared_lines,
-        &input.config,
-        &render,
-        &font,
-        line_number_width,
-        width,
-        height,
-    );
+    let layout = measure_layout(&input.lines, &input.config, &render, &scaled_font);
+    let card = render_card(&layout, &input.config, &render, &font);
     let card = apply_card_effects(card, &input.config, &render);
     let image = finalize_output(&card, &input.config, &render);
 
@@ -606,7 +594,7 @@ fn main() -> Result<()> {
 mod tests {
     use super::{
         apply_card_effects, build_render_config, normalize_index, normalize_span_range,
-        render_scale, save_generated_png, Config,
+        render_scale, save_generated_png, Config, PreparedLine, PreparedSegment,
     };
     use image::{Rgba, RgbaImage};
 
@@ -676,6 +664,25 @@ mod tests {
         assert_eq!(render_scale(0.0), 2.0);
         assert_eq!(render_scale(-1.0), 2.0);
         assert_eq!(render_scale(1.5), 1.5);
+    }
+
+    #[test]
+    fn prepared_line_keeps_fractional_segment_advances() {
+        let line = PreparedLine {
+            segments: vec![
+                PreparedSegment {
+                    text: "x",
+                    width: 7.25,
+                    color: Rgba([0, 0, 0, 255]),
+                },
+                PreparedSegment {
+                    text: "y",
+                    width: 7.25,
+                    color: Rgba([255, 0, 0, 255]),
+                },
+            ],
+        };
+        assert_eq!(line.width().ceil(), 15.0);
     }
 
     #[test]
