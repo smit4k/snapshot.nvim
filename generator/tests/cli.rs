@@ -1,4 +1,6 @@
-use image::GenericImageView;
+use ab_glyph::FontRef;
+use image::{GenericImageView, Rgba, RgbaImage};
+use imageproc::drawing::draw_text_mut;
 use serde_json::{json, Value};
 use std::fs;
 use std::io::Write;
@@ -155,9 +157,10 @@ fn renders_file_path_in_a_separate_header_above_numbered_code() {
 #[test]
 fn renders_file_path_beside_the_traffic_lights_in_one_row() {
     let fixture = Fixture::new();
+    let file_path = "/AAAA/AAAA.lua";
     let path = fixture.render(json!({
         "lines": [{ "text": "A", "spans": [] }],
-        "file_path": "/AAAA/AAAA.lua",
+        "file_path": file_path,
         "config": {
             "scale": 1, "font_size": 20, "line_height": 24, "padding": 2,
             "outer_padding": 0, "border_radius": 0, "shadow": false,
@@ -168,10 +171,27 @@ fn renders_file_path_beside_the_traffic_lights_in_one_row() {
     let rendered = image::open(path).unwrap().to_rgba8();
 
     assert_eq!(rendered.height(), 32 + 24 + 4);
-    assert_eq!(*rendered.get_pixel(60, 16), image::Rgba([40, 200, 64, 255]));
-    assert!(rendered.enumerate_pixels().any(|(x, y, p)| {
-        x >= 78 && (10..22).contains(&y) && p[0] > 100 && p[0] == p[1] && p[1] == p[2]
-    }));
+    assert_eq!(*rendered.get_pixel(60, 16), Rgba([40, 200, 64, 255]));
+
+    let path_x = 78;
+    let mut expected = RgbaImage::from_pixel(rendered.width() - path_x, 32, Rgba([0, 0, 0, 255]));
+    let extra_bold =
+        FontRef::try_from_slice(include_bytes!("../fonts/JetBrainsMono-ExtraBold.ttf")).unwrap();
+    draw_text_mut(
+        &mut expected,
+        Rgba([255; 4]),
+        0,
+        8,
+        16.0,
+        &extra_bold,
+        file_path,
+    );
+    assert!(rendered
+        .view(path_x, 0, expected.width(), expected.height())
+        .pixels()
+        .zip(expected.pixels())
+        // Compositing the card can round the antialiased pixels by one.
+        .all(|((_, _, actual), expected)| actual[0].abs_diff(expected[0]) <= 1));
     assert!(rendered
         .rows()
         .nth(31)

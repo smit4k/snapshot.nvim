@@ -1,7 +1,7 @@
 mod shadow;
 mod utils;
 
-use ab_glyph::{Font, FontVec, PxScale};
+use ab_glyph::{Font, FontRef, FontVec, PxScale};
 use anyhow::{anyhow, ensure, Context, Result};
 use arboard::Clipboard;
 use chrono::offset::Local;
@@ -170,6 +170,7 @@ struct PreparedLayout<'a> {
 
 struct FilePathHeader<'a> {
     text: &'a str,
+    font: FontRef<'static>,
     scale: PxScale,
     x: u32,
 }
@@ -367,7 +368,9 @@ fn measure_layout<'a>(
             (TRAFFIC_LIGHT_SPACING * 4.0 * render.render_scale).ceil() as u32,
         ));
     }
-    let file_path_header = file_path.map(|text| {
+    let file_path_header = if let Some(text) = file_path {
+        let font = FontRef::try_from_slice(include_bytes!("../fonts/JetBrainsMono-ExtraBold.ttf"))
+            .context("Failed to load file path font")?;
         let mut x = (f64::from(render.scaled_padding) + line_number_width).round();
         if config.traffic_lights {
             // Use the largest corner radius the card height allows while the width is still unknown.
@@ -381,12 +384,15 @@ fn measure_layout<'a>(
         let path_width = measure_text_width(text, &font.as_scaled(file_path_scale)).max(1.0);
         let path_right = (x + path_width).ceil() as u32;
         width = width.max(u64::from(path_right) + u64::from(render.scaled_padding));
-        FilePathHeader {
+        Some(FilePathHeader {
             text,
+            font,
             scale: file_path_scale,
             x: x as u32,
-        }
-    });
+        })
+    } else {
+        None
+    };
     ensure!(
         width > 0 && height > 0,
         "Snapshot width and height must be positive"
@@ -453,7 +459,7 @@ fn render_card(
             header.x as i32,
             ((layout.header_height as f32 - header.scale.y) / 2.0).round() as i32,
             header.scale,
-            font,
+            &header.font,
             header.text,
         );
     }
